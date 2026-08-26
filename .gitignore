@@ -1,0 +1,41 @@
+# Local build products and generated files
+native/build/
+native/build-*/
+native/compile-*/
+native/matrix-output/
+native/signature-*/
+native/scripts/
+native/native.zip
+DEVELOPMENT_GUIDE.md
+*.obj
+*.dll
+*.lib
+*.exp
+
+# Local dependencies, captures and analysis data
+native/deps/
+native/logs/
+diagnostics/
+backups/
+analysis/
+build/
+dist/
+tools/
+
+# Keep only the publishable native source and build entry point
+native/src/*
+!native/src/UltrawideMenuBackgrounds.cpp
+native/*.ps1
+!native/build.ps1
+source/
+
+# Editor/OS files
+.vs/
+.vscode/
+*.user
+*.suo
+Thumbs.db
+Desktop.ini
+
+# Temporary CET probe output
+**/diagnostic.log
