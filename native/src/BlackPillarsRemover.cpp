@@ -1,6 +1,7 @@
 #include <cstdint>
 #include <cstring>
 #include <atomic>
+#include <intrin.h>
 #include <windows.h>
 
 #define RED4EXT_HEADER_ONLY
@@ -29,11 +30,25 @@ RED4ext::Vector2* FitReferenceRectOverride(RED4ext::Vector2* aResult,
 {
     auto* result = s_originalFitReferenceRect(aResult, aInput);
 
+    const auto imageBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+    const auto returnAddress = reinterpret_cast<uintptr_t>(_ReturnAddress());
+    const auto callerRva = imageBase != 0 ? returnAddress - imageBase : 0;
+
+    // This caller converts analog-controller pointer coordinates into the
+    // stock UI reference space. Returning the physical ultrawide rectangle
+    // here makes the virtual pointer appear but prevents stick movement.
+    // Keep the stock fitted rectangle for this input path while allowing the
+    // fullscreen compositor callers below to use the physical rectangle.
+    constexpr uintptr_t kControllerPointerCallerReturnRva = 0x103BE12;
+    const bool isControllerPointerPath =
+        callerRva == kControllerPointerCallerReturnRva;
+
     // REDengine normally fits fullscreen menus into a fixed 3840x2160
     // reference rectangle. Preserve the physical rectangle on ultrawide
     // displays so the compositor does not generate side pillars.
     if (result != nullptr && aInput != nullptr &&
         s_suppressed.load(std::memory_order_relaxed) &&
+        !isControllerPointerPath &&
         // 3200x900 is also accepted as a practical 32:9 development mode on
         // a 3440x1440 panel. The wide minimum and aspect check still prevent
         // ordinary UI rectangles from entering this fullscreen-only path.
@@ -145,7 +160,7 @@ RED4EXT_C_EXPORT void RED4EXT_CALL Query(RED4ext::v1::PluginInfo* aInfo)
 {
     aInfo->name = L"Black Pillars Remover";
     aInfo->author = L"djoole";
-    aInfo->version = RED4EXT_V1_SEMVER(1, 2, 0);
+    aInfo->version = RED4EXT_V1_SEMVER(1, 2, 1);
     aInfo->runtime = RED4EXT_V1_RUNTIME_VERSION_LATEST;
     aInfo->sdk = RED4EXT_V1_SDK_VERSION_CURRENT;
 }

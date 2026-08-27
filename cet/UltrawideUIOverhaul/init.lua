@@ -1,5 +1,5 @@
 local MOD_NAME = "Ultrawide UI Overhaul"
-local VERSION = "1.2.0"
+local VERSION = "1.2.1"
 local LOG_PREFIX = "[UltrawideUIOverhaul]"
 local DEBUG = false
 
