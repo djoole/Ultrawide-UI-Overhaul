@@ -34,11 +34,24 @@ The hook is version-locked to Cyberpunk 2077 2.31. It checks the expected bytes
 at the target RVA and refuses to install on an unknown executable. A game update
 may require a new RVA/signature before the plugin can be used safely.
 
-Version 1.1.0 adds dynamic main-menu scene detection, Preem Menu compatibility,
-Skip Time coverage and correct pillar-state preservation across CET hot reloads.
+## Version 1.2.0
 
-Version 1.2.0 adds 32:9 support, ratio-aware edge-widget placement and improved
-MODS / MOD SETTINGS list positioning on ultrawide displays.
+- Added full 32:9 support across all covered menus and the world map.
+- Added ratio-aware placement for edge widgets, button hints and decorative
+  elements.
+- Generalized SAVE / LOAD layout corrections for both 21:9 and 32:9.
+- Improved MODS and MOD SETTINGS list positioning on ultrawide displays.
+- Added support for the 3200x900 custom 32:9 test resolution.
+- Preserved the validated 21:9 layouts without regressions.
+
+## Version 1.1.0
+
+- Added Preem Menu compatibility.
+- Added dynamic main-menu scene detection for alternate backgrounds.
+- Added Skip Time ultrawide coverage.
+- Preserved the correct pillar state across CET Reload All Mods.
+- Improved main-menu timing and lifecycle reliability.
+- Added and validated 2560x1080 support.
 
 ## Build
 
