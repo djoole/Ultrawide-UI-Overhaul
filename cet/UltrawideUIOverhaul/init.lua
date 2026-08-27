@@ -1,5 +1,5 @@
 local MOD_NAME = "Ultrawide UI Overhaul"
-local VERSION = "1.2.1"
+local VERSION = "1.2.2"
 local LOG_PREFIX = "[UltrawideUIOverhaul]"
 local DEBUG = false
 
@@ -21,7 +21,10 @@ local MAX_32X9_ASPECT = 3.65
 local pendingLayouts = {}
 local activeHubMenu = ""
 local settingsProbePrinted = false
-local mainMenuRetryBudget = 1200
+-- Start idle. The main-menu discovery window is armed only while the engine
+-- is actually in pre-game, otherwise Skip Main Menu can make the recursive
+-- search spill into the first in-game menu for roughly one minute.
+local mainMenuRetryBudget = 0
 local mainMenuRetryTimer = 0.0
 local mainMenuPillarTimer = 0.0
 local mainMenuPillarPending = false
@@ -77,6 +80,53 @@ end
 local function safe(callback)
     local ok, value = pcall(callback)
     return ok and value or nil
+end
+
+local function isPreGame()
+    return safe(function()
+        local handler = Game.GetSystemRequestsHandler()
+        if handler == nil then return nil end
+        return handler:IsPreGame()
+    end)
+end
+
+local function cancelMainMenuRetries(reason)
+    if mainMenuRetryBudget <= 0 then return end
+    diagnosticLog(string.format(
+        "in-game menu detected (%s); cancelling %d main-menu retries",
+        tostring(reason), mainMenuRetryBudget
+    ))
+    mainMenuRetryBudget = 0
+    mainMenuRetryTimer = 0.0
+    mainMenuSceneReadyPasses = 0
+end
+
+local function ensureMenuPillarsDisabled(reason)
+    -- A delayed/finalization pass may execute after the player has already
+    -- selected a save and entered a loading transition. Only a live menu
+    -- event is allowed to repair the compositor state.
+    local normalizedReason = string.lower(tostring(reason or ""))
+    if string.find(normalizedReason, "delayed", 1, true) ~= nil or
+       string.find(normalizedReason, "finalize", 1, true) ~= nil then
+        return
+    end
+
+    local ok, errorMessage = pcall(function()
+        local coordinator = GetMod("BlackPillarsCoordinator")
+        if coordinator ~= nil and coordinator.SetPillarsDisabled ~= nil then
+            coordinator.SetPillarsDisabled(true)
+        elseif UWMenuSetPillarsDisabled ~= nil then
+            UWMenuSetPillarsDisabled(true)
+        else
+            UWMapSetBlackBarsSuppressed(true)
+        end
+    end)
+    if not ok then
+        debugLog(string.format(
+            "%s failed to disable menu pillars (%s): %s",
+            LOG_PREFIX, tostring(reason), tostring(errorMessage)
+        ))
+    end
 end
 
 local function widgetName(widget)
@@ -249,6 +299,8 @@ local function applyMenuShellLayout(geometry)
 end
 
 local function applyWorldMapLayout(controller, reason)
+    cancelMainMenuRetries("world map " .. tostring(reason))
+    ensureMenuPillarsDisabled("world map " .. tostring(reason))
     local geometry = getTargetGeometry()
     if geometry == nil or controller == nil then return end
 
@@ -306,6 +358,8 @@ local function applyWorldMapLayout(controller, reason)
 end
 
 local function applyInventoryLayout(controller, reason)
+    cancelMainMenuRetries("inventory " .. tostring(reason))
+    ensureMenuPillarsDisabled("inventory " .. tostring(reason))
     local geometry = getTargetGeometry()
     if geometry == nil or controller == nil then return end
 
@@ -373,6 +427,8 @@ local function getMenuVirtualWindow()
 end
 
 local function applyCyberwareLayout(controller, reason)
+    cancelMainMenuRetries("cyberware " .. tostring(reason))
+    ensureMenuPillarsDisabled("cyberware " .. tostring(reason))
     local geometry = getTargetGeometry()
     if geometry == nil or controller == nil then return end
 
@@ -398,6 +454,8 @@ local function applyCyberwareLayout(controller, reason)
 end
 
 local function applyCharacterLayout(controller, reason)
+    cancelMainMenuRetries("character " .. tostring(reason))
+    ensureMenuPillarsDisabled("character " .. tostring(reason))
     local geometry = getTargetGeometry()
     if geometry == nil or controller == nil then return end
 
@@ -434,6 +492,8 @@ local function applyCharacterLayout(controller, reason)
 end
 
 local function applyJournalLayout(controller, reason)
+    cancelMainMenuRetries("journal " .. tostring(reason))
+    ensureMenuPillarsDisabled("journal " .. tostring(reason))
     local geometry = getTargetGeometry()
     if geometry == nil or controller == nil then return end
 
@@ -459,6 +519,8 @@ local function applyJournalLayout(controller, reason)
 end
 
 local function applyBackpackLayout(controller, reason)
+    cancelMainMenuRetries("backpack " .. tostring(reason))
+    ensureMenuPillarsDisabled("backpack " .. tostring(reason))
     local geometry = getTargetGeometry()
     if geometry == nil or controller == nil then return end
 
@@ -484,6 +546,8 @@ local function applyBackpackLayout(controller, reason)
 end
 
 local function applyAuxiliaryMenuLayout(controller, reason, menuLabel, hintWidgetName)
+    cancelMainMenuRetries(tostring(menuLabel) .. " " .. tostring(reason))
+    ensureMenuPillarsDisabled(tostring(menuLabel) .. " " .. tostring(reason))
     local geometry = getTargetGeometry()
     if geometry == nil or controller == nil then return end
 
@@ -508,6 +572,8 @@ local function applyAuxiliaryMenuLayout(controller, reason, menuLabel, hintWidge
 end
 
 local function applyHubLayout(controller, reason)
+    cancelMainMenuRetries("hub " .. tostring(reason))
+    ensureMenuPillarsDisabled("hub " .. tostring(reason))
     local geometry = getTargetGeometry()
     if geometry == nil or controller == nil then return end
 
@@ -565,6 +631,8 @@ local function applyHubLayout(controller, reason)
 end
 
 local function applyPauseMenuLayout(controller, reason)
+    cancelMainMenuRetries("pause " .. tostring(reason))
+    ensureMenuPillarsDisabled("pause " .. tostring(reason))
     local geometry = getTargetGeometry()
     if geometry == nil or controller == nil then return end
 
@@ -815,6 +883,8 @@ local function applySystemNotificationLayout()
 end
 
 local function applyTimeSkipLayout(controller, reason)
+    cancelMainMenuRetries("time skip " .. tostring(reason))
+    ensureMenuPillarsDisabled("time skip " .. tostring(reason))
     local geometry = getTargetGeometry()
     if geometry == nil or controller == nil then return end
 
@@ -880,6 +950,7 @@ local function applyStealthRunnerPopupLayout()
 end
 
 local function applySaveGameLayout(controller, reason)
+    ensureMenuPillarsDisabled("save/load " .. tostring(reason))
     local geometry = getTargetGeometry()
     if geometry == nil or controller == nil then return end
 
@@ -955,6 +1026,7 @@ local function applySaveGameLayout(controller, reason)
 end
 
 local function applySettingsLayout(controller, reason)
+    ensureMenuPillarsDisabled("settings " .. tostring(reason))
     local geometry = getTargetGeometry()
     if geometry == nil or controller == nil then return end
 
@@ -1147,15 +1219,37 @@ registerForEvent("onInit", function()
     ))
     debugLog(string.format("%s %s v%s initialized", LOG_PREFIX, MOD_NAME, VERSION))
 
+    -- CET may initialize either on the real main menu or after a startup mod
+    -- has already begun loading a save. Only an explicit true may arm the
+    -- expensive asynchronous main-menu scene search.
+    local preGame = isPreGame()
+    if preGame == true then
+        mainMenuRetryBudget = 1200
+        mainMenuRetryTimer = 0.0
+    else
+        mainMenuRetryBudget = 0
+        mainMenuRetryTimer = 0.0
+    end
+    diagnosticLog(string.format(
+        "initial IsPreGame=%s mainMenuRetryBudget=%d",
+        tostring(preGame), mainMenuRetryBudget
+    ))
+
     pcall(function()
         Observe("gameuiPreGameMenuGameController", "OnInitialize", function()
             diagnosticLog("event: gameuiPreGameMenuGameController.OnInitialize")
+            mainMenuRetryBudget = 1200
+            mainMenuRetryTimer = 0.0
+            mainMenuSceneReadyPasses = 0
         end)
     end)
 
     pcall(function()
         Observe("SingleplayerMenuGameController", "OnInitialize", function()
             diagnosticLog("event: SingleplayerMenuGameController.OnInitialize")
+            mainMenuRetryBudget = 1200
+            mainMenuRetryTimer = 0.0
+            mainMenuSceneReadyPasses = 0
         end)
     end)
 
@@ -1374,6 +1468,13 @@ end)
 
 registerForEvent("onUpdate", function(deltaTime)
     applySystemNotificationLayout()
+
+    -- Stop immediately when Skip Main Menu (or any equivalent startup mod)
+    -- takes the engine out of pre-game. This prevents recursive main-menu
+    -- discovery from running inside Inventory or another in-game Ink menu.
+    if mainMenuRetryBudget > 0 and isPreGame() == false then
+        cancelMainMenuRetries("engine left pre-game")
+    end
 
     if mainMenuPillarPending then
         mainMenuPillarTimer = mainMenuPillarTimer - deltaTime
