@@ -1,4 +1,5 @@
--- Black Pillars Remover - lifecycle coordinator
+-- Ultrawide UI Overhaul v1.1.0
+-- Black Pillars Coordinator
 --
 -- The native plugin owns the compositor hook. This small, independent CET
 -- module only tells it when fullscreen pillars are desirable:
@@ -9,6 +10,7 @@
 
 local pillarsDisabled = nil
 local loadingActive = false
+local publicApi = {}
 
 
 ---------------------------------------------------------------------------
@@ -62,6 +64,10 @@ UWMenuSetPillarsDisabled = function(disabled)
     setPillarsDisabled(disabled, false)
 end
 
+publicApi.SetPillarsDisabled = function(disabled)
+    UWMenuSetPillarsDisabled(disabled)
+end
+
 
 ---------------------------------------------------------------------------
 -- Loading lifecycle
@@ -104,8 +110,12 @@ registerForEvent("onInit", function()
     -- Startup
     -----------------------------------------------------------------------
 
-    -- Keep stock pillars throughout the startup logo / publisher sequence.
-    setPillarsDisabled(false, false)
+    -- Do not overwrite the native compositor state here. The DLL starts with
+    -- stock pillars enabled on a real process launch. During CET's
+    -- "Reload All Mods", however, the DLL remains loaded and already holds
+    -- the correct state for the current screen. Preserving it avoids both an
+    -- early main-menu suppression and pillars reappearing in an attached
+    -- playable session whose QuestTracker.OnInitialize will not be replayed.
 
 
     -----------------------------------------------------------------------
@@ -400,9 +410,13 @@ end)
 registerForEvent("onShutdown", function()
 
     loadingActive = false
+    pillarsDisabled = nil
 
-    -- Restore stock compositor behaviour on shutdown.
-    setPillarsDisabled(false, true)
+    -- Keep the native state intact across CET hot reloads. On a real game
+    -- shutdown the DLL is unloaded immediately afterwards, so no compositor
+    -- state needs to be restored from Lua.
 
     UWMenuSetPillarsDisabled = nil
 end)
+
+return publicApi

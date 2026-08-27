@@ -1,7 +1,13 @@
-local MOD_NAME = "Ultrawide World Map"
-local VERSION = "1.0.0-preview"
+local MOD_NAME = "Ultrawide UI Overhaul"
+local VERSION = "1.1.0"
 local LOG_PREFIX = "[UltrawideUIOverhaul]"
 local DEBUG = false
+
+-- Diagnostic build switch:
+--   true  = write live main-menu diagnostics for testers
+--   false = production build; no diagnostic file or diagnostic I/O
+local MAIN_MENU_DIAGNOSTICS = false
+local MAIN_MENU_DIAGNOSTIC_FILE = "main_menu_diagnostic.log"
 
 local REFERENCE_HEIGHT = 2160.0
 local VIEWPORT_HEIGHT = 1080.0
@@ -14,6 +20,12 @@ local activeHubMenu = ""
 local settingsProbePrinted = false
 local mainMenuRetryBudget = 1200
 local mainMenuRetryTimer = 0.0
+local mainMenuPillarTimer = 0.0
+local mainMenuPillarPending = false
+local mainMenuPillarsDisabled = false
+local mainMenuDiagnosticAttempt = 0
+local mainMenuDiagnosticSignature = ""
+local mainMenuSceneReadyPasses = 0
 local stealthRunnerRetryBudget = 0
 local stealthRunnerRetryTimer = 0.0
 local stealthRunnerProbePrinted = false
@@ -29,6 +41,34 @@ local menuHintWidgetNames = {
 
 local function debugLog(message)
     if DEBUG then print(message) end
+end
+
+local function initializeDiagnosticLog()
+    if not MAIN_MENU_DIAGNOSTICS then return end
+
+    local file = io.open(MAIN_MENU_DIAGNOSTIC_FILE, "w")
+    if file ~= nil then
+        file:write(string.format(
+            "[%s] [MainMenuDiagnostics] diagnostic logging initialized\n",
+            os.date("%Y-%m-%d %H:%M:%S")
+        ))
+        file:flush()
+        file:close()
+    end
+end
+
+local function diagnosticLog(message)
+    if not MAIN_MENU_DIAGNOSTICS then return end
+
+    local file = io.open(MAIN_MENU_DIAGNOSTIC_FILE, "a")
+    if file ~= nil then
+        file:write(string.format(
+            "[%s] [MainMenuDiagnostics] %s\n",
+            os.date("%Y-%m-%d %H:%M:%S"), tostring(message)
+        ))
+        file:flush()
+        file:close()
+    end
 end
 
 local function safe(callback)
@@ -523,42 +563,142 @@ local function applyPauseMenuLayout(controller, reason)
 end
 
 local function applyMainMenuLayout(reason)
+    mainMenuDiagnosticAttempt = mainMenuDiagnosticAttempt + 1
+
     local geometry = getTargetGeometry()
-    if geometry == nil then return false end
+    if geometry == nil then
+        diagnosticLog("apply " .. reason .. ": unsupported or unavailable display geometry")
+        return false, false
+    end
 
     local searchRoot = getMenuVirtualWindow()
-    if searchRoot == nil then return false end
+    if searchRoot == nil then
+        diagnosticLog("apply " .. reason .. ": inkMenuLayer virtual window unavailable")
+        return false, false
+    end
+
+    -- Preem Menu replaces the vanilla bganim hierarchy with this specific
+    -- runtime layout:
+    --   VirtualWindow / Root (550x400) / Root (3840x2160) /
+    --   backgroundContainer / <dynamic scene>
+    -- Keep this compatibility path deliberately strict so a different main
+    -- menu replacement is not treated as Preem merely because bganim is
+    -- absent. Accept the already-expanded width on subsequent retry passes.
+    local preemMenuDetected = false
+    local preemRootsResized = 0
+    local preemRootDescription = "none"
+    local directChildCount = safe(function() return searchRoot:GetNumChildren() end) or 0
+    for outerIndex = 0, directChildCount - 1 do
+        local outerRoot = safe(function() return searchRoot:GetWidget(outerIndex) end)
+        local outerSize = outerRoot ~= nil and safe(function() return outerRoot:GetSize() end) or nil
+        local outerMatches = outerRoot ~= nil and widgetName(outerRoot) == "Root" and
+            outerSize ~= nil and math.abs(outerSize.X - 550.0) <= 5.0 and
+            math.abs(outerSize.Y - 400.0) <= 5.0
+
+        if outerMatches then
+            local innerChildCount = safe(function() return outerRoot:GetNumChildren() end) or 0
+            for innerIndex = 0, innerChildCount - 1 do
+                local innerRoot = safe(function() return outerRoot:GetWidget(innerIndex) end)
+                local innerSize = innerRoot ~= nil and safe(function() return innerRoot:GetSize() end) or nil
+                local innerWidthMatches = innerSize ~= nil and (
+                    math.abs(innerSize.X - 3840.0) <= 5.0 or
+                    math.abs(innerSize.X - geometry.contentWidth) <= 5.0
+                )
+                local innerMatches = innerRoot ~= nil and widgetName(innerRoot) == "Root" and
+                    innerWidthMatches and innerSize ~= nil and
+                    math.abs(innerSize.Y - REFERENCE_HEIGHT) <= 5.0
+
+                if innerMatches then
+                    local hasDirectBackgroundContainer = false
+                    local contentCount = safe(function() return innerRoot:GetNumChildren() end) or 0
+                    for contentIndex = 0, contentCount - 1 do
+                        local content = safe(function() return innerRoot:GetWidget(contentIndex) end)
+                        if content ~= nil and widgetName(content) == "backgroundContainer" then
+                            hasDirectBackgroundContainer = true
+                            break
+                        end
+                    end
+
+                    if hasDirectBackgroundContainer then
+                        preemMenuDetected = true
+                        preemRootDescription = string.format(
+                            "outer[%d]=%.1fx%.1f inner[%d]=%.1fx%.1f",
+                            outerIndex, outerSize.X, outerSize.Y,
+                            innerIndex, innerSize.X, innerSize.Y
+                        )
+                        local ok, errorMessage = pcall(function()
+                            innerRoot:SetSize(geometry.contentWidth, REFERENCE_HEIGHT)
+                        end)
+                        if ok then
+                            preemRootsResized = preemRootsResized + 1
+                        else
+                            diagnosticLog("Preem Menu root resize failed: " .. tostring(errorMessage))
+                        end
+                    end
+                end
+            end
+        end
+    end
 
     local backgroundRoots = 0
-    for _, widget in ipairs(collectByName(searchRoot, "bganim", 12)) do
+    local bganimWidgets = collectByName(searchRoot, "bganim", 12)
+    for _, widget in ipairs(bganimWidgets) do
         local parent = safe(function() return widget:GetParentWidget() end)
         if parent ~= nil then
-            local ok = pcall(function()
+            local ok, errorMessage = pcall(function()
                 parent:SetSize(geometry.contentWidth, REFERENCE_HEIGHT)
             end)
-            if ok then backgroundRoots = backgroundRoots + 1 end
+            if ok then
+                backgroundRoots = backgroundRoots + 1
+            else
+                diagnosticLog("bganim parent resize failed: " .. tostring(errorMessage))
+            end
         end
     end
 
     local backgroundScenes = 0
+    local childDescriptions = {}
     local coverScale = geometry.contentWidth / 3840.0
     local verticalCrop = (REFERENCE_HEIGHT * coverScale - REFERENCE_HEIGHT) * 0.5
-    for _, child in ipairs(collectByName(searchRoot, "v_apt_shot1", 12)) do
-        local ok = pcall(function()
-            -- Scale the complete dynamically loaded scene uniformly. Its
-            -- animated layers remain synchronized; the excess height is
-            -- cropped equally above and below.
-            child:SetScale(Vector2.new({
-                X = coverScale,
-                Y = coverScale
-            }))
-            child:SetTranslation(Vector2.new({
-                X = 0.0,
-                Y = -verticalCrop
-            }))
-            child:SetMargin(660.0, 0.0, 0.0, 0.0)
-        end)
-        if ok then backgroundScenes = backgroundScenes + 1 end
+    local horizontalInset = (geometry.contentWidth - 3840.0) * 0.5
+    local backgroundContainers = collectByName(searchRoot, "backgroundContainer", 12)
+    for containerIndex, container in ipairs(backgroundContainers) do
+        local childCount = safe(function() return container:GetNumChildren() end) or 0
+        table.insert(childDescriptions, string.format(
+            "container%d children=%d", containerIndex, childCount
+        ))
+        for index = 0, childCount - 1 do
+            local child = safe(function() return container:GetWidget(index) end)
+            if child ~= nil then
+                local childName = widgetName(child)
+                table.insert(childDescriptions, string.format(
+                    "container%d[%d]=%s", containerIndex, index, childName
+                ))
+                local ok, errorMessage = pcall(function()
+                    -- The game dynamically selects the scene placed inside
+                    -- backgroundContainer. Scale that scene by position in
+                    -- the hierarchy instead of depending on a resource name
+                    -- such as v_apt_shot1.
+                    child:SetScale(Vector2.new({
+                        X = coverScale,
+                        Y = coverScale
+                    }))
+                    child:SetTranslation(Vector2.new({
+                        X = 0.0,
+                        Y = -verticalCrop
+                    }))
+                    child:SetMargin(horizontalInset, 0.0, 0.0, 0.0)
+                end)
+                if ok then
+                    backgroundScenes = backgroundScenes + 1
+                else
+                    diagnosticLog(string.format(
+                        "scene transform failed for %s: %s",
+                        childName, tostring(errorMessage)
+                    ))
+                end
+            end
+        end
     end
 
     debugLog(string.format(
@@ -566,17 +706,47 @@ local function applyMainMenuLayout(reason)
         LOG_PREFIX, reason, backgroundRoots, backgroundScenes
     ))
 
-    local complete = backgroundRoots > 0 and backgroundScenes > 0
-    if complete then
-        pcall(function()
-            if UWMenuSetPillarsDisabled ~= nil then
-                UWMenuSetPillarsDisabled(true)
-            else
-                UWMapSetBlackBarsSuppressed(true)
-            end
-        end)
+    -- Vanilla/Cleaner use bganim. Preem Menu intentionally has no bganim and
+    -- is authorized only by the exact hierarchy signature checked above.
+    local vanillaBackgroundReady = backgroundRoots > 0
+    local supportedLayoutReady = vanillaBackgroundReady or preemMenuDetected
+    local sceneReady = backgroundScenes > 0
+    local signature = string.format(
+        "bganim=%d preem=%s preemRoots=%d preemPath={%s} containers=%d scenes=%d children={%s}",
+        #bganimWidgets, tostring(preemMenuDetected), preemRootsResized,
+        preemRootDescription, #backgroundContainers, backgroundScenes,
+        table.concat(childDescriptions, ", ")
+    )
+    local signatureChanged = signature ~= mainMenuDiagnosticSignature
+    if signatureChanged or mainMenuDiagnosticAttempt % 10 == 0 then
+        diagnosticLog(string.format(
+            "apply #%d (%s): %s scale=%.4f inset=%.2f crop=%.2f",
+            mainMenuDiagnosticAttempt, reason, signature,
+            coverScale, horizontalInset, verticalCrop
+        ))
+        mainMenuDiagnosticSignature = signature
     end
-    return complete
+
+    if signatureChanged and sceneReady and not supportedLayoutReady then
+        diagnosticLog(
+            "BLOCKED: scene is ready but pillar removal was not scheduled; " ..
+            "neither vanilla bganim nor the strict Preem Menu hierarchy was detected"
+        )
+    end
+
+    -- The container may exist several seconds before its selected scene is
+    -- attached. Use the actual child as the readiness signal for both the
+    -- transform and pillar removal.
+    if supportedLayoutReady and sceneReady and
+       not mainMenuPillarPending and not mainMenuPillarsDisabled then
+        mainMenuPillarPending = true
+        mainMenuPillarTimer = 0.10
+        diagnosticLog(string.format(
+            "main-menu scene ready (%s); pillar removal scheduled in 0.10s",
+            preemMenuDetected and "Preem Menu" or "vanilla-compatible layout"
+        ))
+    end
+    return supportedLayoutReady, sceneReady
 end
 
 local function applySystemNotificationLayout()
@@ -604,6 +774,28 @@ local function applySystemNotificationLayout()
         pcall(function()
             canvas:SetSize(geometry.contentWidth, REFERENCE_HEIGHT)
         end)
+    end
+end
+
+local function applyTimeSkipLayout(controller, reason)
+    local geometry = getTargetGeometry()
+    if geometry == nil or controller == nil then return end
+
+    -- Context: gameuiTimeskipGameController, Root/NotificationsContainer/
+    -- UNINITIALIZED_WIDGET/Root. The controller root is the popup's 16:9
+    -- canvas, so it can be widened directly without touching the shared
+    -- inkGameNotificationsLayer.
+    local root = safe(function() return controller:GetRootWidget() end)
+    if root == nil then
+        debugLog(LOG_PREFIX .. " time skip root unavailable during " .. reason)
+        return
+    end
+
+    local ok, errorMessage = pcall(function()
+        root:SetSize(geometry.contentWidth, REFERENCE_HEIGHT)
+    end)
+    if not ok then
+        print(LOG_PREFIX .. " time skip layout failed: " .. tostring(errorMessage))
     end
 end
 
@@ -876,7 +1068,25 @@ local function configureMapCamera(gameObject)
 end
 
 registerForEvent("onInit", function()
+    initializeDiagnosticLog()
+    local displayWidth, displayHeight = GetDisplayResolution()
+    diagnosticLog(string.format(
+        "%s v%s initialized at %dx%d",
+        MOD_NAME, VERSION, displayWidth or -1, displayHeight or -1
+    ))
     debugLog(string.format("%s %s v%s initialized", LOG_PREFIX, MOD_NAME, VERSION))
+
+    pcall(function()
+        Observe("gameuiPreGameMenuGameController", "OnInitialize", function()
+            diagnosticLog("event: gameuiPreGameMenuGameController.OnInitialize")
+        end)
+    end)
+
+    pcall(function()
+        Observe("SingleplayerMenuGameController", "OnInitialize", function()
+            diagnosticLog("event: SingleplayerMenuGameController.OnInitialize")
+        end)
+    end)
 
     Observe("WorldMapMenuGameController", "OnInitialize", function(controller)
         applyWorldMapLayout(controller, "OnInitialize")
@@ -975,6 +1185,16 @@ registerForEvent("onInit", function()
         table.insert(pendingLayouts, { controller = controller, kind = "auxiliary", label = "shards", hintName = "button_hints", elapsed = 0.0 })
     end)
 
+    Observe("gameuiTimeskipGameController", "OnInitialize", function(controller)
+        applyTimeSkipLayout(controller, "OnInitialize")
+        table.insert(pendingLayouts, {
+            controller = controller,
+            kind = "timeskip",
+            elapsed = 0.0,
+            delay = 0.10
+        })
+    end)
+
     Observe("PerksMainGameController", "OnInitialize", function(controller)
         applyCharacterLayout(controller, "OnInitialize")
         table.insert(pendingLayouts, { controller = controller, kind = "character", elapsed = 0.0 })
@@ -1019,6 +1239,13 @@ registerForEvent("onInit", function()
     end)
 
     Observe("SingleplayerMenuGameController", "OnSavesForLoadReady", function(controller)
+        diagnosticLog("event: SingleplayerMenuGameController.OnSavesForLoadReady")
+        mainMenuPillarPending = false
+        mainMenuPillarsDisabled = false
+        mainMenuPillarTimer = 0.0
+        mainMenuDiagnosticAttempt = 0
+        mainMenuDiagnosticSignature = ""
+        mainMenuSceneReadyPasses = 0
         applyMainMenuLayout("OnSavesForLoadReady")
         mainMenuRetryBudget = 1200
         mainMenuRetryTimer = 0.0
@@ -1072,6 +1299,31 @@ end)
 
 registerForEvent("onUpdate", function(deltaTime)
     applySystemNotificationLayout()
+
+    if mainMenuPillarPending then
+        mainMenuPillarTimer = mainMenuPillarTimer - deltaTime
+        if mainMenuPillarTimer <= 0.0 then
+            diagnosticLog("pillar timer elapsed; requesting disabled pillars")
+            local ok, errorMessage = pcall(function()
+                local coordinator = GetMod("BlackPillarsCoordinator")
+                if coordinator ~= nil and coordinator.SetPillarsDisabled ~= nil then
+                    diagnosticLog("calling BlackPillarsCoordinator.SetPillarsDisabled(true)")
+                    coordinator.SetPillarsDisabled(true)
+                elseif UWMenuSetPillarsDisabled ~= nil then
+                    diagnosticLog("calling legacy UWMenuSetPillarsDisabled(true)")
+                    UWMenuSetPillarsDisabled(true)
+                else
+                    diagnosticLog("coordinator unavailable; calling UWMapSetBlackBarsSuppressed(true)")
+                    UWMapSetBlackBarsSuppressed(true)
+                end
+            end)
+            mainMenuPillarPending = false
+            mainMenuPillarsDisabled = ok
+            diagnosticLog(ok and "pillar disable request completed" or
+                ("pillar disable request failed: " .. tostring(errorMessage)))
+        end
+    end
+
     -- StealthRunner creates this notification without reliably notifying the
     -- PopupsManager blackboard. A throttled scan of this small layer is cheap
     -- and avoids a recursive walk every frame.
@@ -1094,15 +1346,30 @@ registerForEvent("onUpdate", function(deltaTime)
     if mainMenuRetryBudget > 0 then
         mainMenuRetryTimer = mainMenuRetryTimer - deltaTime
         if mainMenuRetryTimer <= 0.0 then
-            local complete = applyMainMenuLayout("retry")
-            if complete then
-                mainMenuRetryBudget = 0
+            local backgroundReady, sceneReady = applyMainMenuLayout("retry")
+            if sceneReady then
+                mainMenuSceneReadyPasses = mainMenuSceneReadyPasses + 1
+                if mainMenuSceneReadyPasses >= 15 then
+                    diagnosticLog("scene transform stable for 15 passes; retries stopped")
+                    mainMenuRetryBudget = 0
+                else
+                    mainMenuRetryBudget = mainMenuRetryBudget - 1
+                    mainMenuRetryTimer = 0.10
+                end
             else
+                mainMenuSceneReadyPasses = 0
+                -- The selected scene is inserted asynchronously into
+                -- backgroundContainer. Once bganim exists, allow it a short
+                -- grace period to appear, then stop scanning.
+                if backgroundReady and mainMenuRetryBudget > 300 then
+                    diagnosticLog("bganim ready; limiting scene search to 30 seconds")
+                    mainMenuRetryBudget = 300
+                end
                 mainMenuRetryBudget = mainMenuRetryBudget - 1
-                -- Once the real animated apartment exists, catch it before a
-                -- visibly vanilla frame is presented. The scan remains finite
-                -- and stops immediately after v_apt_shot1 is modified.
-                mainMenuRetryTimer = 0.05
+                mainMenuRetryTimer = backgroundReady and 0.10 or 0.05
+                if mainMenuRetryBudget == 0 then
+                    diagnosticLog("scene search budget exhausted without a stable child")
+                end
             end
         end
     end
@@ -1130,6 +1397,8 @@ registerForEvent("onUpdate", function(deltaTime)
                     applyPauseMenuLayout(item.controller, "delayed")
                 elseif item.kind == "settingsFinalize" then
                     applySettingsLayout(item.controller, "finalize")
+                elseif item.kind == "timeskip" then
+                    applyTimeSkipLayout(item.controller, "delayed")
                 else
                     applyWorldMapLayout(item.controller, "delayed")
                 end
@@ -1147,6 +1416,12 @@ registerForEvent("onShutdown", function()
     settingsProbePrinted = false
     mainMenuRetryBudget = 0
     mainMenuRetryTimer = 0.0
+    mainMenuPillarTimer = 0.0
+    mainMenuPillarPending = false
+    mainMenuPillarsDisabled = false
+    mainMenuDiagnosticAttempt = 0
+    mainMenuDiagnosticSignature = ""
+    mainMenuSceneReadyPasses = 0
     stealthRunnerRetryBudget = 0
     stealthRunnerRetryTimer = 0.0
     stealthRunnerProbePrinted = false
