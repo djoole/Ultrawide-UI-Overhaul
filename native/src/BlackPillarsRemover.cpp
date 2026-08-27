@@ -34,7 +34,10 @@ RED4ext::Vector2* FitReferenceRectOverride(RED4ext::Vector2* aResult,
     // displays so the compositor does not generate side pillars.
     if (result != nullptr && aInput != nullptr &&
         s_suppressed.load(std::memory_order_relaxed) &&
-        aInput->X >= 2500.0f && aInput->Y >= 1000.0f &&
+        // 3200x900 is also accepted as a practical 32:9 development mode on
+        // a 3440x1440 panel. The wide minimum and aspect check still prevent
+        // ordinary UI rectangles from entering this fullscreen-only path.
+        aInput->X >= 2500.0f && aInput->Y >= 700.0f &&
         aInput->X / aInput->Y > (16.0f / 9.0f + 0.01f))
     {
         *result = *aInput;
@@ -142,7 +145,7 @@ RED4EXT_C_EXPORT void RED4EXT_CALL Query(RED4ext::v1::PluginInfo* aInfo)
 {
     aInfo->name = L"Black Pillars Remover";
     aInfo->author = L"djoole";
-    aInfo->version = RED4EXT_V1_SEMVER(1, 1, 0);
+    aInfo->version = RED4EXT_V1_SEMVER(1, 2, 0);
     aInfo->runtime = RED4EXT_V1_RUNTIME_VERSION_LATEST;
     aInfo->sdk = RED4EXT_V1_SDK_VERSION_CURRENT;
 }

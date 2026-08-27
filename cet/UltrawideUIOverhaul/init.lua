@@ -1,5 +1,5 @@
 local MOD_NAME = "Ultrawide UI Overhaul"
-local VERSION = "1.1.0"
+local VERSION = "1.2.0"
 local LOG_PREFIX = "[UltrawideUIOverhaul]"
 local DEBUG = false
 
@@ -12,8 +12,11 @@ local MAIN_MENU_DIAGNOSTIC_FILE = "main_menu_diagnostic.log"
 local REFERENCE_HEIGHT = 2160.0
 local VIEWPORT_HEIGHT = 1080.0
 local CAMERA_HEIGHT = 720
-local MIN_SUPPORTED_ASPECT = 2.30
-local MAX_SUPPORTED_ASPECT = 2.45
+local LEGACY_21X9_CONTENT_WIDTH = 5160.0
+local MIN_21X9_ASPECT = 2.30
+local MAX_21X9_ASPECT = 2.45
+local MIN_32X9_ASPECT = 3.45
+local MAX_32X9_ASPECT = 3.65
 
 local pendingLayouts = {}
 local activeHubMenu = ""
@@ -132,17 +135,39 @@ local function getTargetGeometry()
     end
 
     local aspect = displayWidth / displayHeight
-    if aspect < MIN_SUPPORTED_ASPECT or aspect > MAX_SUPPORTED_ASPECT then
+    local is21x9 = aspect >= MIN_21X9_ASPECT and aspect <= MAX_21X9_ASPECT
+    local is32x9 = aspect >= MIN_32X9_ASPECT and aspect <= MAX_32X9_ASPECT
+    if not is21x9 and not is32x9 then
         return nil
     end
 
     return {
         aspect = aspect,
+        profile = is32x9 and "32:9" or "21:9",
         viewportWidth = aspect * VIEWPORT_HEIGHT,
         contentWidth = aspect * REFERENCE_HEIGHT,
         cameraWidth = math.floor(aspect * CAMERA_HEIGHT + 0.5),
         cameraHeight = CAMERA_HEIGHT
     }
+end
+
+-- The original 21:9 layouts were visually tuned on a 5160-wide INK canvas. Keep
+-- those exact values for 21:9, then add only the extra half-width introduced
+-- by wider profiles. This makes edge corrections scale to 32:9 without
+-- disturbing the already validated 21:9 presentation.
+local function getExtraHorizontalInset(geometry)
+    return math.max(
+        0.0,
+        (geometry.contentWidth - LEGACY_21X9_CONTENT_WIDTH) * 0.5
+    )
+end
+
+local function extendMarginToEdge(margin, geometry)
+    return margin - getExtraHorizontalInset(geometry)
+end
+
+local function preserveCenteredMargin(margin, geometry)
+    return margin + getExtraHorizontalInset(geometry)
 end
 
 local function positionRightFluff(root, geometry, maxDepth)
@@ -322,7 +347,9 @@ local function applyInventoryLayout(controller, reason)
     local buttonHints = 0
     for _, widget in ipairs(collectByName(root, "button_hints", 12)) do
         local ok = pcall(function()
-            widget:SetMargin(50.0, 50.0, -540.0, 50.0)
+            widget:SetMargin(
+                50.0, 50.0, extendMarginToEdge(-540.0, geometry), 50.0
+            )
         end)
         if ok then buttonHints = buttonHints + 1 end
     end
@@ -355,7 +382,9 @@ local function applyCyberwareLayout(controller, reason)
     local buttonHints = 0
     for _, widget in ipairs(collectByName(searchRoot, "button_hints", 24)) do
         local ok = pcall(function()
-            widget:SetMargin(0.0, 0.0, -540.0, 50.0)
+            widget:SetMargin(
+                0.0, 0.0, extendMarginToEdge(-540.0, geometry), 50.0
+            )
         end)
         if ok then buttonHints = buttonHints + 1 end
     end
@@ -389,7 +418,9 @@ local function applyCharacterLayout(controller, reason)
     local buttonHints = 0
     for _, widget in ipairs(collectByName(searchRoot, "button_hints", 24)) do
         local ok = pcall(function()
-            widget:SetMargin(0.0, 0.0, -540.0, 50.0)
+            widget:SetMargin(
+                0.0, 0.0, extendMarginToEdge(-540.0, geometry), 50.0
+            )
         end)
         if ok then buttonHints = buttonHints + 1 end
     end
@@ -412,7 +443,9 @@ local function applyJournalLayout(controller, reason)
     local buttonHints = 0
     for _, widget in ipairs(collectByName(searchRoot, "button_hints", 24)) do
         local ok = pcall(function()
-            widget:SetMargin(0.0, 0.0, -540.0, 50.0)
+            widget:SetMargin(
+                0.0, 0.0, extendMarginToEdge(-540.0, geometry), 50.0
+            )
         end)
         if ok then buttonHints = buttonHints + 1 end
     end
@@ -435,7 +468,9 @@ local function applyBackpackLayout(controller, reason)
     local buttonHints = 0
     for _, widget in ipairs(collectByName(searchRoot, "button_hints", 24)) do
         local ok = pcall(function()
-            widget:SetMargin(0.0, 0.0, -540.0, 50.0)
+            widget:SetMargin(
+                0.0, 0.0, extendMarginToEdge(-540.0, geometry), 50.0
+            )
         end)
         if ok then buttonHints = buttonHints + 1 end
     end
@@ -458,7 +493,9 @@ local function applyAuxiliaryMenuLayout(controller, reason, menuLabel, hintWidge
     local buttonHints = 0
     for _, widget in ipairs(collectByName(searchRoot, hintWidgetName, 24)) do
         local ok = pcall(function()
-            widget:SetMargin(0.0, 0.0, -540.0, 50.0)
+            widget:SetMargin(
+                0.0, 0.0, extendMarginToEdge(-540.0, geometry), 50.0
+            )
         end)
         if ok then buttonHints = buttonHints + 1 end
     end
@@ -852,7 +889,9 @@ local function applySaveGameLayout(controller, reason)
     local fluffs = 0
     for _, widget in ipairs(collectByName(searchRoot, "fluffs", 24)) do
         local ok = pcall(function()
-            widget:SetMargin(-604.0, 16.0, 0.0, 0.0)
+            widget:SetMargin(
+                extendMarginToEdge(-604.0, geometry), 16.0, 0.0, 0.0
+            )
         end)
         if ok then fluffs = fluffs + 1 end
     end
@@ -875,7 +914,7 @@ local function applySaveGameLayout(controller, reason)
             if margin ~= nil then
                 local ok = pcall(function()
                     widget:SetMargin(
-                        margin.left + 600.0,
+                        margin.left + preserveCenteredMargin(600.0, geometry),
                         margin.top,
                         margin.right,
                         margin.bottom
@@ -889,7 +928,9 @@ local function applySaveGameLayout(controller, reason)
     local buttonHints = 0
     for _, widget in ipairs(collectByName(searchRoot, "button_hints", 24)) do
         local ok = pcall(function()
-            widget:SetMargin(0.0, 0.0, -540.0, 120.0)
+            widget:SetMargin(
+                0.0, 0.0, extendMarginToEdge(-540.0, geometry), 120.0
+            )
         end)
         if ok then buttonHints = buttonHints + 1 end
     end
@@ -897,7 +938,12 @@ local function applySaveGameLayout(controller, reason)
     local lines = 0
     for _, widget in ipairs(collectByName(searchRoot, "line", 24)) do
         local ok = pcall(function()
-            widget:SetMargin(-520.0, 155.0, -1020.0, 0.0)
+            widget:SetMargin(
+                extendMarginToEdge(-520.0, geometry),
+                155.0,
+                extendMarginToEdge(-1020.0, geometry),
+                0.0
+            )
         end)
         if ok then lines = lines + 1 end
     end
@@ -1012,7 +1058,9 @@ local function applySettingsLayout(controller, reason)
     local rightSides = 0
     for _, widget in ipairs(collectByName(searchRoot, "rightSide", 24)) do
         local ok = pcall(function()
-            widget:SetMargin(0.0, 346.0, 1545.0, 0.0)
+            widget:SetMargin(
+                0.0, 346.0, preserveCenteredMargin(1545.0, geometry), 0.0
+            )
         end)
         if ok then rightSides = rightSides + 1 end
     end
@@ -1020,9 +1068,32 @@ local function applySettingsLayout(controller, reason)
     local bottomFluffs = 0
     for _, widget in ipairs(collectByName(searchRoot, "inkHorizontalPanelWidget47", 24)) do
         local ok = pcall(function()
-            widget:SetMargin(0.0, 0.0, -360.0, 70.0)
+            widget:SetMargin(
+                0.0, 0.0, extendMarginToEdge(-360.0, geometry), 70.0
+            )
         end)
         if ok then bottomFluffs = bottomFluffs + 1 end
+    end
+
+    local modSettingsLists = 0
+    local fullHorizontalInset = (geometry.contentWidth - 3840.0) * 0.5
+    for _, widget in ipairs(collectByName(searchRoot, "mod_settings", 24)) do
+        local ok = pcall(function()
+            -- Keep the mod list attached to the left side of the centered
+            -- configuration area instead of the physical ultrawide edge.
+            widget:SetMargin(500.0 + fullHorizontalInset, 320.0, 0.0, 0.0)
+        end)
+        if ok then modSettingsLists = modSettingsLists + 1 end
+    end
+
+    local nativeModsLists = 0
+    for _, widget in ipairs(collectByName(searchRoot, "extraButtons", 24)) do
+        local ok = pcall(function()
+            -- Native Settings UI mod list: use the same centered content
+            -- boundary as Mod Settings while preserving its vanilla X base.
+            widget:SetMargin(250.0 + fullHorizontalInset, 320.0, 0.0, 0.0)
+        end)
+        if ok then nativeModsLists = nativeModsLists + 1 end
     end
 
     local edgeFluffs = 0
@@ -1041,9 +1112,9 @@ local function applySettingsLayout(controller, reason)
     end
 
     debugLog(string.format(
-        "%s settings %s: backgroundRoots=%d backgrounds=%d backgroundLayers=%d rightSides=%d bottomFluffs=%d edgeFluffs=%d",
+        "%s settings %s: backgroundRoots=%d backgrounds=%d backgroundLayers=%d rightSides=%d bottomFluffs=%d modSettingsLists=%d nativeModsLists=%d edgeFluffs=%d",
         LOG_PREFIX, reason, backgroundRoots, backgrounds, backgroundLayers,
-        rightSides, bottomFluffs, edgeFluffs
+        rightSides, bottomFluffs, modSettingsLists, nativeModsLists, edgeFluffs
     ))
 end
 
@@ -1152,7 +1223,11 @@ registerForEvent("onInit", function()
         for _ = 1, 4 do
             if widget == nil then return end
             if widgetName(widget) == expectedName then
-                widget:SetMargin(0.0, 0.0, -540.0, 50.0)
+                local geometry = getTargetGeometry()
+                if geometry == nil then return end
+                widget:SetMargin(
+                    0.0, 0.0, extendMarginToEdge(-540.0, geometry), 50.0
+                )
                 debugLog(LOG_PREFIX .. " " .. activeHubMenu .. " " .. expectedName .. " initialized")
                 return
             end

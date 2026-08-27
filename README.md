@@ -1,10 +1,10 @@
 # Ultrawide UI Overhaul
 
-Current release: **1.1.0**
+Current release: **1.2.0**
 
 RED4ext plugin (`BlackPillarsRemover`) that prevents Cyberpunk 2077's fullscreen compositor from
 adding 16:9 side pillars when an ultrawide menu or background is intentionally
-laid out across a 21:9 display.
+laid out across a 21:9 or 32:9 display.
 
 The plugin does not move widgets and does not alter menu layout by itself.
 Widget placement is handled separately by the CET script in
@@ -18,13 +18,13 @@ Widget placement is handled separately by the CET script in
 
 ## Features
 
-- Full-width 21:9 world map with synchronized map geometry, markers, district
+- Full-width 21:9 and 32:9 world map with synchronized map geometry, markers, district
   outlines and GPS path;
 - ultrawide backgrounds and repositioned edge widgets across the vanilla
   fullscreen menus;
 - coordinated stock pillars during startup, loading screens, the main menu and
   gameplay;
-- tested at 3440x1440 and 2560x1080;
+- tested at 3440x1440, 2560x1080 and 3200x900 (32:9 test mode);
 - optional UI compatibility for Cleaner Main Menu and Pause Menu, Preem Menu
   and StealthRunner.
 
@@ -36,6 +36,9 @@ may require a new RVA/signature before the plugin can be used safely.
 
 Version 1.1.0 adds dynamic main-menu scene detection, Preem Menu compatibility,
 Skip Time coverage and correct pillar-state preservation across CET hot reloads.
+
+Version 1.2.0 adds 32:9 support, ratio-aware edge-widget placement and improved
+MODS / MOD SETTINGS list positioning on ultrawide displays.
 
 ## Build
 
