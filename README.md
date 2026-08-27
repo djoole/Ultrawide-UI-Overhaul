@@ -40,6 +40,8 @@ may require a new RVA/signature before the plugin can be used safely.
   startup mod bypasses the pre-game menu.
 - Restricted asynchronous main-menu scene discovery to the engine's actual
   pre-game state so it cannot spill into Inventory or other in-game menus.
+- Added automatic pillar-state recovery whenever a covered menu opens, while
+  keeping delayed layout passes from interfering with loading screens.
 
 ## Version 1.2.1
 
