@@ -1,6 +1,6 @@
 # Ultrawide UI Overhaul
 
-Current release: **1.2.2**
+Current release: **2.0.0**
 
 RED4ext plugin (`BlackPillarsRemover`) that prevents Cyberpunk 2077's fullscreen compositor from
 adding 16:9 side pillars when an ultrawide menu or background is intentionally
@@ -18,15 +18,18 @@ Widget placement is handled separately by the CET script in
 
 ## Features
 
-- Full-width 21:9 and 32:9 world map with synchronized map geometry, markers, district
-  outlines and GPS path;
+- Full-width 21:9 and 32:9 world map with synchronized map geometry, markers,
+  district outlines and GPS path;
+- expanded Backpack, Crafting, Gallery and Shards layouts that use the added
+  horizontal workspace instead of merely extending their backgrounds;
 - ultrawide backgrounds and repositioned edge widgets across the vanilla
-  fullscreen menus;
+  fullscreen menus, popup views and Breach Protocol;
 - coordinated stock pillars during startup, loading screens, the main menu and
   gameplay;
-- tested at 3440x1440, 2560x1080 and 3200x900 (32:9 test mode);
+- ratio-aware support covering 21:9, intermediate ultrawide and 32:9 modes,
+  including 1920x816, 2560x1000, 2560x1080, 3440x1440 and 3200x900 tests;
 - optional UI compatibility for Cleaner Main Menu and Pause Menu, Preem Menu
-  and StealthRunner.
+  StealthRunner and Revised Backpack.
 
 ## Compatibility
 
@@ -34,21 +37,39 @@ The hook is version-locked to Cyberpunk 2077 2.31. It checks the expected bytes
 at the target RVA and refuses to install on an unknown executable. A game update
 may require a new RVA/signature before the plugin can be used safely.
 
+## Version 2.0.0
+
+- Turned the project into a full ultrawide UI overhaul rather than a
+  background-only extension.
+- Expanded the vanilla Backpack item grid and repositioned its filters,
+  search, sorting and dropdown controls across the available width.
+- Expanded the Crafting recipe grid with ratio-aware columns and corrected
+  its scrolling and button-hint boundaries.
+- Added optional Revised Backpack support, including expanded list columns,
+  corrected text wrapping, full-row selection effects and larger item and
+  garment previews.
+- Expanded Gallery to use the available width and dynamically show 14 images
+  per page at 21:9 and 20 at 32:9.
+- Expanded the Shards reader and its text wrapping across the remaining
+  screen space.
+- Added ultrawide treatment for Breach Protocol and its tutorial overlay.
+- Added coverage for Reset Attributes, Gallery viewer, Journal detail and
+  Database popup views.
+- Added configured-resolution detection to the native plugin for low-height
+  ultrawide modes such as 1920x816, with a live game-window fallback.
+- Preserved controller-stick pointer input while removing fullscreen pillars.
+- Kept all diagnostic and development probes disabled in the release build.
+
 ## Version 1.2.2
 
-- Fixed severe temporary menu stutter when Skip Main Menu or an equivalent
-  startup mod bypasses the pre-game menu.
-- Restricted asynchronous main-menu scene discovery to the engine's actual
-  pre-game state so it cannot spill into Inventory or other in-game menus.
-- Added automatic pillar-state recovery whenever a covered menu opens, while
-  keeping delayed layout passes from interfering with loading screens.
+- Prevented main-menu discovery retries from spilling into the first in-game
+  menu when Skip Main Menu or a similar startup mod is used.
+- Improved pillar-state recovery and menu lifecycle reliability.
 
 ## Version 1.2.1
 
-- Fixed analog controller pointer movement in menus while the black-pillar
-  removal hook is active.
-- Preserved the game's stock coordinate normalization for controller input
-  without affecting ultrawide fullscreen composition.
+- Fixed controller-stick pointer input being blocked by the native fullscreen
+  composition hook.
 
 ## Version 1.2.0
 

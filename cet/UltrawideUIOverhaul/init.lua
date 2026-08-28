@@ -1,5 +1,5 @@
 local MOD_NAME = "Ultrawide UI Overhaul"
-local VERSION = "1.2.2"
+local VERSION = "2.0.0"
 local LOG_PREFIX = "[UltrawideUIOverhaul]"
 local DEBUG = false
 
@@ -9,21 +9,40 @@ local DEBUG = false
 local MAIN_MENU_DIAGNOSTICS = false
 local MAIN_MENU_DIAGNOSTIC_FILE = "main_menu_diagnostic.log"
 
+-- Temporary development probe for feature/backpack-overhaul. Remove before
+-- release: it writes one complete inventory_wrapper subtree per CET session.
+local BACKPACK_TREE_DIAGNOSTICS = false
+local BACKPACK_TREE_DIAGNOSTIC_FILE = "backpack_inventory_wrapper_dump.log"
+local BACKPACK_CONTROLLER_DIAGNOSTICS = false
+local BACKPACK_CONTROLLER_DIAGNOSTIC_FILE = "backpack_controller_dump.log"
+local BACKPACK_RMK_DIAGNOSTICS = false
+local BACKPACK_RMK_DIAGNOSTIC_FILE = "backpack_rmk_search_dump.log"
+local CRAFTING_TREE_DIAGNOSTICS = false
+local CRAFTING_TREE_DIAGNOSTIC_FILE = "crafting_panel_dump.log"
+local CRAFTING_CONTROLLER_DIAGNOSTICS = false
+local CRAFTING_CONTROLLER_DIAGNOSTIC_FILE = "crafting_controller_dump.log"
+local GALLERY_CONTROLLER_DIAGNOSTICS = false
+local GALLERY_CONTROLLER_DIAGNOSTIC_FILE = "gallery_controller_dump.log"
+local SHARDS_TREE_DIAGNOSTICS = false
+local SHARDS_TREE_DIAGNOSTIC_FILE = "shards_entry_view_dump.log"
+local GALLERY_VANILLA_SCREENSHOTS_PER_PAGE = 10
+local VANILLA_ASPECT = 16.0 / 9.0
+
 local REFERENCE_HEIGHT = 2160.0
 local VIEWPORT_HEIGHT = 1080.0
 local CAMERA_HEIGHT = 720
 local LEGACY_21X9_CONTENT_WIDTH = 5160.0
-local MIN_21X9_ASPECT = 2.30
+local MIN_SUPPORTED_ASPECT = 2.30
+local MAX_SUPPORTED_ASPECT = 3.65
 local MAX_21X9_ASPECT = 2.45
 local MIN_32X9_ASPECT = 3.45
-local MAX_32X9_ASPECT = 3.65
 
 local pendingLayouts = {}
 local activeHubMenu = ""
-local settingsProbePrinted = false
--- Start idle. The main-menu discovery window is armed only while the engine
--- is actually in pre-game, otherwise Skip Main Menu can make the recursive
--- search spill into the first in-game menu for roughly one minute.
+-- Never assume that CET initialization happens on the pre-game menu. A
+-- Reload All Mods performed in the playable world recreates this script too;
+-- arming the long main-menu search there makes the first subsequently opened
+-- Ink menu get recursively scanned for roughly one minute.
 local mainMenuRetryBudget = 0
 local mainMenuRetryTimer = 0.0
 local mainMenuPillarTimer = 0.0
@@ -34,8 +53,22 @@ local mainMenuDiagnosticSignature = ""
 local mainMenuSceneReadyPasses = 0
 local stealthRunnerRetryBudget = 0
 local stealthRunnerRetryTimer = 0.0
-local stealthRunnerProbePrinted = false
 local stealthRunnerScanTimer = 0.0
+local backpackTreeDumped = false
+local backpackTreeScanTimer = 0.0
+local backpackTreeDumpFailed = false
+local backpackControllerDumped = false
+local backpackControllerDumpFailed = false
+local backpackRmkDumped = false
+local craftingTreeDumped = false
+local craftingTreeDumpFailed = false
+local craftingControllerDumped = false
+local craftingControllerDumpFailed = false
+local craftingGridRebuiltControllers = {}
+local galleryControllerDumped = false
+local galleryControllerDumpFailed = false
+local shardsTreeDumped = false
+local shardsTreeDumpFailed = false
 local menuHintWidgetNames = {
     cyberware_equip = "button_hints",
     backpack = "button_hints",
@@ -185,20 +218,43 @@ local function getTargetGeometry()
     end
 
     local aspect = displayWidth / displayHeight
-    local is21x9 = aspect >= MIN_21X9_ASPECT and aspect <= MAX_21X9_ASPECT
-    local is32x9 = aspect >= MIN_32X9_ASPECT and aspect <= MAX_32X9_ASPECT
-    if not is21x9 and not is32x9 then
+    if aspect < MIN_SUPPORTED_ASPECT or aspect > MAX_SUPPORTED_ASPECT then
         return nil
+    end
+
+    local profile = "intermediate ultrawide"
+    if aspect <= MAX_21X9_ASPECT then
+        profile = "21:9"
+    elseif aspect >= MIN_32X9_ASPECT then
+        profile = "32:9"
     end
 
     return {
         aspect = aspect,
-        profile = is32x9 and "32:9" or "21:9",
+        profile = profile,
         viewportWidth = aspect * VIEWPORT_HEIGHT,
         contentWidth = aspect * REFERENCE_HEIGHT,
         cameraWidth = math.floor(aspect * CAMERA_HEIGHT + 0.5),
         cameraHeight = CAMERA_HEIGHT
     }
+end
+
+local function getGalleryScreenshotsPerPage()
+    local geometry = getTargetGeometry()
+    if geometry == nil then
+        return GALLERY_VANILLA_SCREENSHOTS_PER_PAGE
+    end
+
+    -- Scale the vanilla ten entries with the available aspect ratio. The
+    -- upper rounding keeps a newly exposed partial slot usable: 14 entries
+    -- at 21:9 and 20 entries at 32:9.
+    return math.max(
+        GALLERY_VANILLA_SCREENSHOTS_PER_PAGE,
+        math.ceil(
+            GALLERY_VANILLA_SCREENSHOTS_PER_PAGE *
+            geometry.aspect / VANILLA_ASPECT - 0.000001
+        )
+    )
 end
 
 -- The original 21:9 layouts were visually tuned on a 5160-wide INK canvas. Keep
@@ -218,6 +274,581 @@ end
 
 local function preserveCenteredMargin(margin, geometry)
     return margin + getExtraHorizontalInset(geometry)
+end
+
+local function dumpBackpackWidgetTree(root)
+    if not BACKPACK_TREE_DIAGNOSTICS or root == nil or
+        backpackTreeDumped or backpackTreeDumpFailed then
+        return false
+    end
+
+    local file = io.open(BACKPACK_TREE_DIAGNOSTIC_FILE, "w")
+    if file == nil then
+        print(LOG_PREFIX .. " failed to open backpack tree diagnostic file")
+        backpackTreeDumpFailed = true
+        return false
+    end
+
+    local function vectorText(value)
+        return value ~= nil and string.format("%.2f,%.2f", value.X, value.Y) or "nil"
+    end
+
+    local function marginText(value)
+        return value ~= nil and string.format(
+            "%.2f,%.2f,%.2f,%.2f",
+            value.left, value.top, value.right, value.bottom
+        ) or "nil"
+    end
+
+    local function rectText(value)
+        return value ~= nil and string.format(
+            "L%.2f,T%.2f,R%.2f,B%.2f,W%.2f,H%.2f",
+            value.Left, value.Top, value.Right, value.Bottom,
+            value.Right - value.Left, value.Bottom - value.Top
+        ) or "nil"
+    end
+
+    local function valueText(callback)
+        local value = safe(callback)
+        return value ~= nil and tostring(value) or "nil"
+    end
+
+    local function visit(widget, depth, path)
+        if widget == nil or depth > 16 then return end
+
+        local childCount = safe(function() return widget:GetNumChildren() end) or 0
+        local className = valueText(function() return widget:GetClassName() end)
+        file:write(string.format(
+            "%s%s | class=%s children=%d size=%s desired=%s screen=%s margin=%s padding=%s anchor=%s anchorPoint=%s hAlign=%s vAlign=%s sizeRule=%s fit=%s scale=%s translation=%s visible=%s opacity=%s interactive=%s affectsLayoutWhenHidden=%s\n",
+            string.rep("  ", depth), path, className, childCount,
+            vectorText(safe(function() return widget:GetSize() end)),
+            vectorText(safe(function() return widget:GetDesiredSize() end)),
+            rectText(safe(function() return GetScreenPosition(widget) end)),
+            marginText(safe(function() return widget:GetMargin() end)),
+            marginText(safe(function() return widget:GetPadding() end)),
+            valueText(function() return widget:GetAnchor() end),
+            vectorText(safe(function() return widget:GetAnchorPoint() end)),
+            valueText(function() return widget:GetHAlign() end),
+            valueText(function() return widget:GetVAlign() end),
+            valueText(function() return widget:GetSizeRule() end),
+            valueText(function() return widget:GetFitToContent() end),
+            vectorText(safe(function() return widget:GetScale() end)),
+            vectorText(safe(function() return widget:GetTranslation() end)),
+            valueText(function() return widget:IsVisible() end),
+            valueText(function() return widget:GetOpacity() end),
+            valueText(function() return widget:IsInteractive() end),
+            valueText(function() return widget:GetAffectsLayoutWhenHidden() end)
+        ))
+
+        for index = 0, childCount - 1 do
+            local child = safe(function() return widget:GetWidget(index) end)
+            if child ~= nil then
+                local name = widgetName(child)
+                if name == "" then name = "<unnamed>" end
+                visit(child, depth + 1, string.format("%s/%s[%d]", path, name, index))
+            end
+        end
+    end
+
+    file:write(string.format(
+        "Ultrawide UI Overhaul backpack tree dump | %s\n",
+        os.date("%Y-%m-%d %H:%M:%S")
+    ))
+    visit(root, 0, "inventory_wrapper")
+    file:flush()
+    file:close()
+    backpackTreeDumped = true
+    print(LOG_PREFIX .. " backpack inventory_wrapper tree dumped")
+    return true
+end
+
+local function dumpShardsEntryViewTree(root)
+    if not SHARDS_TREE_DIAGNOSTICS or root == nil or
+       shardsTreeDumped or shardsTreeDumpFailed then
+        return false
+    end
+
+    local file = io.open(SHARDS_TREE_DIAGNOSTIC_FILE, "w")
+    if file == nil then
+        print(LOG_PREFIX .. " failed to open shards tree diagnostic file")
+        shardsTreeDumpFailed = true
+        return false
+    end
+
+    local function vectorText(value)
+        return value ~= nil and string.format("%.2f,%.2f", value.X, value.Y) or "nil"
+    end
+
+    local function marginText(value)
+        return value ~= nil and string.format(
+            "%.2f,%.2f,%.2f,%.2f",
+            value.left, value.top, value.right, value.bottom
+        ) or "nil"
+    end
+
+    local function rectText(value)
+        return value ~= nil and string.format(
+            "L%.2f,T%.2f,R%.2f,B%.2f,W%.2f,H%.2f",
+            value.Left, value.Top, value.Right, value.Bottom,
+            value.Right - value.Left, value.Bottom - value.Top
+        ) or "nil"
+    end
+
+    local function valueText(callback)
+        local value = safe(callback)
+        return value ~= nil and tostring(value) or "nil"
+    end
+
+    local function visit(widget, depth, path)
+        if widget == nil or depth > 16 then return end
+
+        local childCount = safe(function() return widget:GetNumChildren() end) or 0
+        file:write(string.format(
+            "%s%s | class=%s children=%d size=%s desired=%s screen=%s margin=%s padding=%s anchor=%s anchorPoint=%s hAlign=%s vAlign=%s sizeRule=%s fit=%s scale=%s translation=%s visible=%s\n",
+            string.rep("  ", depth), path,
+            valueText(function() return widget:GetClassName() end), childCount,
+            vectorText(safe(function() return widget:GetSize() end)),
+            vectorText(safe(function() return widget:GetDesiredSize() end)),
+            rectText(safe(function() return GetScreenPosition(widget) end)),
+            marginText(safe(function() return widget:GetMargin() end)),
+            marginText(safe(function() return widget:GetPadding() end)),
+            valueText(function() return widget:GetAnchor() end),
+            vectorText(safe(function() return widget:GetAnchorPoint() end)),
+            valueText(function() return widget:GetHAlign() end),
+            valueText(function() return widget:GetVAlign() end),
+            valueText(function() return widget:GetSizeRule() end),
+            valueText(function() return widget:GetFitToContent() end),
+            vectorText(safe(function() return widget:GetScale() end)),
+            vectorText(safe(function() return widget:GetTranslation() end)),
+            valueText(function() return widget:IsVisible() end)
+        ))
+
+        for index = 0, childCount - 1 do
+            local child = safe(function() return widget:GetWidget(index) end)
+            if child ~= nil then
+                local name = widgetName(child)
+                if name == "" then name = "<unnamed>" end
+                visit(child, depth + 1, string.format(
+                    "%s/%s[%d]", path, name, index
+                ))
+            end
+        end
+    end
+
+    file:write(string.format(
+        "Ultrawide UI Overhaul shards entryView tree dump | %s\n",
+        os.date("%Y-%m-%d %H:%M:%S")
+    ))
+    visit(root, 0, "entryView")
+    file:flush()
+    file:close()
+    shardsTreeDumped = true
+    print(LOG_PREFIX .. " shards entryView tree dumped")
+    return true
+end
+
+local function dumpBackpackControllers(controller, inventoryWrapper)
+    if not BACKPACK_CONTROLLER_DIAGNOSTICS or backpackControllerDumped or
+        backpackControllerDumpFailed or inventoryWrapper == nil then
+        return false
+    end
+
+    local file = io.open(BACKPACK_CONTROLLER_DIAGNOSTIC_FILE, "w")
+    if file == nil then
+        print(LOG_PREFIX .. " failed to open backpack controller diagnostic file")
+        backpackControllerDumpFailed = true
+        return false
+    end
+
+    local function className(value)
+        return safe(function() return value:GetClassName().value end) or
+            safe(function() return value:GetClassName() end) or "nil"
+    end
+
+    local function dumpObject(label, value)
+        file:write(string.format("\n===== %s | class=%s =====\n", label, className(value)))
+        if value == nil then
+            file:write("nil\n")
+            return
+        end
+
+        local dump = safe(function() return GameDump(value) end)
+        file:write(dump ~= nil and tostring(dump) or "GameDump unavailable or failed")
+        file:write("\n")
+    end
+
+    file:write(string.format(
+        "Ultrawide UI Overhaul backpack controller dump | %s\n",
+        os.date("%Y-%m-%d %H:%M:%S")
+    ))
+
+    dumpObject("applyBackpackLayout controller", controller)
+    dumpObject("inventory_wrapper.logicController",
+        safe(function() return inventoryWrapper.logicController end))
+    dumpObject("inventory_wrapper:GetController()",
+        safe(function() return inventoryWrapper:GetController() end))
+
+    for _, virtualGrid in ipairs(
+        collectByName(inventoryWrapper, "inkVirtualCompoundWidget4", 12)
+    ) do
+        dumpObject("inkVirtualCompoundWidget4 widget", virtualGrid)
+        dumpObject("inkVirtualCompoundWidget4.logicController",
+            safe(function() return virtualGrid.logicController end))
+        dumpObject("inkVirtualCompoundWidget4:GetController()",
+            safe(function() return virtualGrid:GetController() end))
+    end
+
+    file:flush()
+    file:close()
+    backpackControllerDumped = true
+    print(LOG_PREFIX .. " backpack controllers dumped")
+    return true
+end
+
+local function dumpBackpackRmkSearch(searchContainer)
+    if not BACKPACK_RMK_DIAGNOSTICS or backpackRmkDumped or
+        searchContainer == nil then return end
+
+    local file = io.open(BACKPACK_RMK_DIAGNOSTIC_FILE, "w")
+    if file == nil then return end
+
+    local function vectorText(value)
+        return value ~= nil and string.format("%.2f,%.2f", value.X, value.Y) or "nil"
+    end
+    local function marginText(value)
+        return value ~= nil and string.format(
+            "%.2f,%.2f,%.2f,%.2f",
+            value.left, value.top, value.right, value.bottom
+        ) or "nil"
+    end
+    local function rectText(value)
+        return value ~= nil and string.format(
+            "L%.2f,T%.2f,R%.2f,B%.2f,W%.2f,H%.2f",
+            value.Left, value.Top, value.Right, value.Bottom,
+            value.Right - value.Left, value.Bottom - value.Top
+        ) or "nil"
+    end
+
+    file:write(string.format(
+        "Ultrawide UI Overhaul RMK search dump | %s\n",
+        os.date("%Y-%m-%d %H:%M:%S")
+    ))
+    local widget = searchContainer
+    for level = 0, 6 do
+        if widget == nil then break end
+        file:write(string.format(
+            "ancestor%d name=%s class=%s size=%s desired=%s screen=%s margin=%s anchor=%s anchorPoint=%s h=%s v=%s scale=%s translation=%s\n",
+            level,
+            widgetName(widget),
+            tostring(safe(function() return widget:GetClassName() end)),
+            vectorText(safe(function() return widget:GetSize() end)),
+            vectorText(safe(function() return widget:GetDesiredSize() end)),
+            rectText(safe(function() return GetScreenPosition(widget) end)),
+            marginText(safe(function() return widget:GetMargin() end)),
+            tostring(safe(function() return widget:GetAnchor() end)),
+            vectorText(safe(function() return widget:GetAnchorPoint() end)),
+            tostring(safe(function() return widget:GetHAlign() end)),
+            tostring(safe(function() return widget:GetVAlign() end)),
+            vectorText(safe(function() return widget:GetScale() end)),
+            vectorText(safe(function() return widget:GetTranslation() end))
+        ))
+        widget = safe(function() return widget:GetParentWidget() end)
+    end
+
+    file:flush()
+    file:close()
+    backpackRmkDumped = true
+end
+
+local function dumpCraftingWidgetTree(root)
+    if not CRAFTING_TREE_DIAGNOSTICS or craftingTreeDumped or
+        craftingTreeDumpFailed or root == nil then return false end
+
+    local file = io.open(CRAFTING_TREE_DIAGNOSTIC_FILE, "w")
+    if file == nil then
+        craftingTreeDumpFailed = true
+        return false
+    end
+
+    local function vectorText(value)
+        return value ~= nil and string.format("%.2f,%.2f", value.X, value.Y) or "nil"
+    end
+    local function marginText(value)
+        return value ~= nil and string.format(
+            "%.2f,%.2f,%.2f,%.2f",
+            value.left, value.top, value.right, value.bottom
+        ) or "nil"
+    end
+    local function rectText(value)
+        return value ~= nil and string.format(
+            "L%.2f,T%.2f,R%.2f,B%.2f,W%.2f,H%.2f",
+            value.Left, value.Top, value.Right, value.Bottom,
+            value.Right - value.Left, value.Bottom - value.Top
+        ) or "nil"
+    end
+
+    local function visit(widget, depth, path)
+        if widget == nil or depth > 16 then return end
+        local childCount = safe(function() return widget:GetNumChildren() end) or 0
+        file:write(string.format(
+            "%s%s | class=%s children=%d size=%s desired=%s screen=%s margin=%s padding=%s anchor=%s anchorPoint=%s h=%s v=%s rule=%s fit=%s scale=%s translation=%s visible=%s\n",
+            string.rep("  ", depth), path,
+            tostring(safe(function() return widget:GetClassName() end)),
+            childCount,
+            vectorText(safe(function() return widget:GetSize() end)),
+            vectorText(safe(function() return widget:GetDesiredSize() end)),
+            rectText(safe(function() return GetScreenPosition(widget) end)),
+            marginText(safe(function() return widget:GetMargin() end)),
+            marginText(safe(function() return widget:GetPadding() end)),
+            tostring(safe(function() return widget:GetAnchor() end)),
+            vectorText(safe(function() return widget:GetAnchorPoint() end)),
+            tostring(safe(function() return widget:GetHAlign() end)),
+            tostring(safe(function() return widget:GetVAlign() end)),
+            tostring(safe(function() return widget:GetSizeRule() end)),
+            tostring(safe(function() return widget:GetFitToContent() end)),
+            vectorText(safe(function() return widget:GetScale() end)),
+            vectorText(safe(function() return widget:GetTranslation() end)),
+            tostring(safe(function() return widget:IsVisible() end))
+        ))
+
+        for index = 0, childCount - 1 do
+            local child = safe(function() return widget:GetWidget(index) end)
+            if child ~= nil then
+                local name = widgetName(child)
+                if name == "" then name = "<unnamed>" end
+                visit(child, depth + 1,
+                    string.format("%s/%s[%d]", path, name, index))
+            end
+        end
+    end
+
+    file:write(string.format(
+        "Ultrawide UI Overhaul crafting tree dump | %s\n",
+        os.date("%Y-%m-%d %H:%M:%S")
+    ))
+    visit(root, 0, "craftingPanel")
+    file:flush()
+    file:close()
+    craftingTreeDumped = true
+    return true
+end
+
+local function dumpCraftingControllers(controller, craftingPanel)
+    if not CRAFTING_CONTROLLER_DIAGNOSTICS or craftingControllerDumped or
+        craftingControllerDumpFailed or craftingPanel == nil then
+        return false
+    end
+
+    local panelController = safe(function() return craftingPanel:GetController() end) or
+        safe(function() return craftingPanel.logicController end)
+    local virtualListController = panelController ~= nil and safe(function()
+        return panelController.virtualListController
+    end) or nil
+    local dataView = panelController ~= nil and safe(function()
+        return panelController.dataView
+    end) or nil
+    local dataSource = panelController ~= nil and safe(function()
+        return panelController.dataSource
+    end) or nil
+
+    -- CraftingMainGameController.OnInitialize fires before its child crafting
+    -- controller has connected the virtual grid and its data. Wait for a
+    -- delayed layout pass; an early dump only reports NULL and hides the state
+    -- that actually controls/rebuilds the recipe grid.
+    if virtualListController == nil or dataView == nil or dataSource == nil then
+        return false
+    end
+
+    local file = io.open(CRAFTING_CONTROLLER_DIAGNOSTIC_FILE, "w")
+    if file == nil then
+        craftingControllerDumpFailed = true
+        print(LOG_PREFIX .. " failed to open crafting controller diagnostic file")
+        return false
+    end
+
+    local function className(value)
+        return safe(function() return value:GetClassName().value end) or
+            safe(function() return value:GetClassName() end) or "nil"
+    end
+
+    local function dumpObject(label, value)
+        file:write(string.format("\n===== %s | class=%s =====\n", label, className(value)))
+        if value == nil then
+            file:write("nil\n")
+            return
+        end
+
+        local dump = safe(function() return GameDump(value) end)
+        file:write(dump ~= nil and tostring(dump) or "GameDump unavailable or failed")
+        file:write("\n")
+    end
+
+    file:write(string.format(
+        "Ultrawide UI Overhaul crafting controller dump | %s\n",
+        os.date("%Y-%m-%d %H:%M:%S")
+    ))
+
+    dumpObject("CraftingMainGameController", controller)
+    dumpObject("craftingPanel.logicController",
+        safe(function() return craftingPanel.logicController end))
+    dumpObject("craftingPanel:GetController()", panelController)
+    dumpObject("CraftingLogicController.virtualListController", virtualListController)
+    dumpObject("CraftingLogicController.dataView", dataView)
+    dumpObject("CraftingLogicController.dataSource", dataSource)
+
+    for _, virtualList in ipairs(
+        collectByName(craftingPanel, "virtualListContainer", 16)
+    ) do
+        dumpObject("virtualListContainer widget", virtualList)
+        dumpObject("virtualListContainer.logicController",
+            safe(function() return virtualList.logicController end))
+        dumpObject("virtualListContainer:GetController()",
+            safe(function() return virtualList:GetController() end))
+    end
+
+    file:flush()
+    file:close()
+    craftingControllerDumped = true
+    print(LOG_PREFIX .. " crafting controllers dumped")
+    return true
+end
+
+local function dumpGalleryControllers(controller, searchRoot)
+    if not GALLERY_CONTROLLER_DIAGNOSTICS or galleryControllerDumped or
+       galleryControllerDumpFailed or controller == nil or searchRoot == nil then
+        return false
+    end
+
+    local screenshotAreas = collectByName(searchRoot, "screenshots_area", 24)
+    if #screenshotAreas == 0 then return false end
+
+    local file = io.open(GALLERY_CONTROLLER_DIAGNOSTIC_FILE, "w")
+    if file == nil then
+        galleryControllerDumpFailed = true
+        print(LOG_PREFIX .. " failed to open gallery controller diagnostic file")
+        return false
+    end
+
+    local function className(value)
+        return safe(function() return value:GetClassName().value end) or
+            safe(function() return value:GetClassName() end) or "nil"
+    end
+
+    local function dumpObject(label, value)
+        file:write(string.format("\n===== %s | class=%s =====\n", label, className(value)))
+        if value == nil then
+            file:write("nil\n")
+            return
+        end
+        local dump = safe(function() return GameDump(value) end)
+        file:write(dump ~= nil and tostring(dump) or "GameDump unavailable or failed")
+        file:write("\n")
+    end
+
+    file:write(string.format(
+        "Ultrawide UI Overhaul gallery controller dump | %s\n",
+        os.date("%Y-%m-%d %H:%M:%S")
+    ))
+    dumpObject("GalleryMenuGameController", controller)
+
+    for areaIndex, screenshotArea in ipairs(screenshotAreas) do
+        dumpObject("screenshots_area[" .. areaIndex .. "]", screenshotArea)
+        dumpObject("screenshots_area.logicController",
+            safe(function() return screenshotArea.logicController end))
+        dumpObject("screenshots_area:GetController()",
+            safe(function() return screenshotArea:GetController() end))
+
+        for listIndex, list in ipairs(collectByName(screenshotArea, "list", 4)) do
+            dumpObject("screenshots_area/list[" .. listIndex .. "]", list)
+            dumpObject("list.logicController",
+                safe(function() return list.logicController end))
+            dumpObject("list:GetController()",
+                safe(function() return list:GetController() end))
+        end
+    end
+
+    file:flush()
+    file:close()
+    galleryControllerDumped = true
+    print(LOG_PREFIX .. " gallery controllers dumped")
+    return true
+end
+
+local function applyCraftingGridLayout(craftingPanel, geometry)
+    if craftingPanel == nil or geometry == nil then return 0, false end
+
+    -- The vanilla recipe viewport is 1350 wide. Consume the additional
+    -- ultrawide canvas for the recipe side, plus one 220-wide cell that fits
+    -- in the remaining gap without moving the details panel. This gives 2890
+    -- at the legacy 21:9 reference width: twelve columns in total.
+    local extraWidth = math.max(0.0, geometry.contentWidth - 3840.0)
+    local gridWidth = 1350.0 + extraWidth + 220.0
+    local listHolderWidth = gridWidth - 200.0
+    local resized = 0
+
+    for _, leftContainer in ipairs(collectByName(craftingPanel, "leftContainer", 4)) do
+        local targets = {
+            { name = "list_holder", width = listHolderWidth, height = 1400.0 },
+            { name = "gridFrame", width = gridWidth + 2.0, height = 1520.0 },
+            { name = "cache", width = gridWidth, height = 1400.0 },
+            { name = "scroll_area", width = gridWidth, height = 1400.0 },
+            { name = "virtualListContainer", width = gridWidth, height = 1400.0 }
+        }
+
+        for _, target in ipairs(targets) do
+            for _, widget in ipairs(collectByName(leftContainer, target.name, 8)) do
+                local ok = pcall(function()
+                    widget:SetSize(target.width, target.height)
+                    widget:FlagForVisualInvalidation()
+                end)
+                if ok then resized = resized + 1 end
+            end
+        end
+
+    end
+
+    -- Keep the details panel immediately to the right of the enlarged recipe
+    -- viewport (1435 vanilla + the same ultrawide expansion).
+    for _, detailsCanvas in ipairs(collectByName(craftingPanel, "inkCanvasWidget7", 3)) do
+        pcall(function()
+            local margin = detailsCanvas:GetMargin()
+            detailsCanvas:SetMargin(
+                1435.0 + extraWidth,
+                margin ~= nil and margin.top or -40.0,
+                margin ~= nil and margin.right or 0.0,
+                margin ~= nil and margin.bottom or 0.0
+            )
+            detailsCanvas:FlagForVisualInvalidation()
+        end)
+    end
+
+    local panelController = safe(function() return craftingPanel:GetController() end) or
+        safe(function() return craftingPanel.logicController end)
+    if panelController == nil or craftingGridRebuiltControllers[panelController] then
+        return resized, false
+    end
+
+    local virtualListController = safe(function()
+        return panelController.virtualListController
+    end)
+    local dataView = safe(function() return panelController.dataView end)
+    if virtualListController == nil or dataView == nil then
+        return resized, false
+    end
+
+    -- The virtual grid caches its column layout when SetSource is first called.
+    -- Reassigning the existing view once makes it rebuild against gridWidth.
+    local rebuilt = pcall(function()
+        virtualListController:SetSource(nil)
+        virtualListController:SetSource(dataView)
+    end)
+    if rebuilt then
+        craftingGridRebuiltControllers[panelController] = true
+    else
+        print(LOG_PREFIX .. " crafting virtual grid rebuild failed")
+    end
+
+    return resized, rebuilt
 end
 
 local function positionRightFluff(root, geometry, maxDepth)
@@ -518,6 +1149,24 @@ local function applyJournalLayout(controller, reason)
     ))
 end
 
+local function applyDatabaseLayout(controller, reason)
+    cancelMainMenuRetries("database " .. tostring(reason))
+    ensureMenuPillarsDisabled("database " .. tostring(reason))
+    local geometry = getTargetGeometry()
+    if geometry == nil or controller == nil then return end
+
+    local searchRoot = getMenuVirtualWindow()
+    if searchRoot == nil then return end
+
+    for _, widget in ipairs(collectByName(searchRoot, "button_hints", 24)) do
+        pcall(function()
+            widget:SetMargin(
+                0.0, 0.0, extendMarginToEdge(-540.0, geometry), 50.0
+            )
+        end)
+    end
+end
+
 local function applyBackpackLayout(controller, reason)
     cancelMainMenuRetries("backpack " .. tostring(reason))
     ensureMenuPillarsDisabled("backpack " .. tostring(reason))
@@ -527,21 +1176,391 @@ local function applyBackpackLayout(controller, reason)
     local searchRoot = getMenuVirtualWindow()
     if searchRoot == nil then return end
 
+    local widenedRoots = 0
+    local widenedInventoryCanvases = 0
+    local positionedRmkSearchContainers = 0
+    local inventoryCanvasWidth = 3990.0 + math.max(
+        0.0,
+        geometry.contentWidth - LEGACY_21X9_CONTENT_WIDTH
+    )
+    for _, wrapper in ipairs(collectByName(searchRoot, "wrapper", 24)) do
+        local parent = safe(function() return wrapper:GetParentWidget() end)
+        if parent ~= nil and widgetName(parent) == "Root" then
+            local ok = pcall(function()
+                -- Backpack's second Root owns wrapper and the item-grid area.
+                -- Widen only this branch; the other Root keeps the vanilla
+                -- coordinate space used by the rest of the screen.
+                parent:SetSize(geometry.contentWidth, REFERENCE_HEIGHT)
+            end)
+            if ok then widenedRoots = widenedRoots + 1 end
+        end
+
+        for _, canvas in ipairs(
+            collectByName(wrapper, "inkCanvasWidget21", 8)
+        ) do
+            local ok = pcall(function()
+                local size = canvas:GetSize()
+                canvas:SetSize(inventoryCanvasWidth, size.Y)
+                canvas:FlagForVisualInvalidation()
+            end)
+            if ok then
+                widenedInventoryCanvases = widenedInventoryCanvases + 1
+            end
+
+            local filterButtons = collectByName(
+                canvas, "filter_buttons", 4
+            )[1]
+            for _, searchContainer in ipairs(
+                collectByName(canvas, "searchContainer", 5)
+            ) do
+                dumpBackpackRmkSearch(searchContainer)
+                if filterButtons ~= nil then
+                    local searchOk = pcall(function()
+                        local currentParent = searchContainer:GetParentWidget()
+                        local searchIndex = -1
+                        local dropdownIndex = -1
+                        local childCount = filterButtons:GetNumChildren()
+                        for index = 0, childCount - 1 do
+                            local child = filterButtons:GetWidget(index)
+                            if child == searchContainer then
+                                searchIndex = index
+                            elseif widgetName(child) == "dropdownButton8" then
+                                dropdownIndex = index
+                            end
+                        end
+
+                        if dropdownIndex >= 0 and
+                            (currentParent ~= filterButtons or
+                             searchIndex ~= dropdownIndex - 1) then
+                            local targetIndex = dropdownIndex
+                            if currentParent == filterButtons and
+                                searchIndex >= 0 and searchIndex < dropdownIndex then
+                                targetIndex = dropdownIndex - 1
+                            end
+                            searchContainer:Reparent(filterButtons, targetIndex)
+                        elseif currentParent ~= filterButtons then
+                            searchContainer:Reparent(filterButtons, -1)
+                        end
+                        searchContainer:SetMargin(0.0, 0.0, 0.0, 0.0)
+                        searchContainer:SetSize(620.0, 80.0)
+                        searchContainer:FlagForVisualInvalidation()
+                    end)
+                    if searchOk then
+                        positionedRmkSearchContainers =
+                            positionedRmkSearchContainers + 1
+                    end
+                end
+            end
+        end
+    end
+
+    local expandedGridColumns = 0
+    local additionalGridWidth = 0.0
+    for _, inventoryWrapper in ipairs(
+        collectByName(searchRoot, "inventory_wrapper", 24)
+    ) do
+        dumpBackpackControllers(controller, inventoryWrapper)
+
+        for _, virtualGrid in ipairs(
+            collectByName(inventoryWrapper, "inkVirtualCompoundWidget4", 12)
+        ) do
+            local gridController = safe(function()
+                return virtualGrid.logicController
+            end) or safe(function()
+                return virtualGrid:GetController()
+            end)
+            local slotSize = safe(function() return gridController.slotSize end)
+            local slotWidth = slotSize ~= nil and slotSize.X or 222.0
+            local availableWidth = math.max(
+                0.0,
+                geometry.contentWidth - 3840.0
+            )
+            -- Backpack is aligned to the new left edge, so its grid can use
+            -- the complete width added beyond the original 16:9 canvas. At
+            -- 21:9 this is 1320 INK units, i.e. six additional 222-unit
+            -- columns after normal layout rounding.
+            local additionalColumns = math.floor(
+                availableWidth / slotWidth + 0.5
+            )
+            local targetColumns = 12 + additionalColumns
+            local usedWidth = additionalColumns * slotWidth
+
+            local ok = pcall(function()
+                gridController.width = targetColumns
+                virtualGrid:SetSize(1800.0 + usedWidth, 1800.0)
+                virtualGrid:FlagForVisualInvalidation()
+            end)
+            if ok then
+                expandedGridColumns = targetColumns
+                additionalGridWidth = usedWidth
+            end
+        end
+
+        if additionalGridWidth > 0.0 then
+            local widthByName = {
+                scroll_cache_widget = 2720.0,
+                scroll_area = 2720.0,
+                ScrollCacheImage = 2740.0,
+                scrollingBackground = 1800.0,
+                scrollingBackgroundshadow = 1800.0,
+                inkCanvasWidget16 = 2740.0
+            }
+            for name, vanillaWidth in pairs(widthByName) do
+                for _, widget in ipairs(collectByName(inventoryWrapper, name, 12)) do
+                    pcall(function()
+                        local size = widget:GetSize()
+                        widget:SetSize(vanillaWidth + additionalGridWidth, size.Y)
+                        widget:FlagForVisualInvalidation()
+                    end)
+                end
+            end
+        end
+    end
+
+    if not backpackTreeDumped then
+        for _, inventoryWrapper in ipairs(collectByName(searchRoot, "inventory_wrapper", 24)) do
+            local parent = safe(function() return inventoryWrapper:GetParentWidget() end)
+            if parent ~= nil and widgetName(parent) == "wrapper" then
+                dumpBackpackWidgetTree(inventoryWrapper)
+                break
+            end
+        end
+    end
+
     local buttonHints = 0
     for _, widget in ipairs(collectByName(searchRoot, "button_hints", 24)) do
         local ok = pcall(function()
-            widget:SetMargin(
-                0.0, 0.0, extendMarginToEdge(-540.0, geometry), 50.0
-            )
+            widget:SetMargin(0.0, 0.0, 120.0, 50.0)
         end)
         if ok then buttonHints = buttonHints + 1 end
+    end
+
+    local dropdownContainers = 0
+    local dropdownLeft = 4146.0 + math.max(
+        0.0,
+        geometry.contentWidth - LEGACY_21X9_CONTENT_WIDTH
+    )
+    for _, widget in ipairs(
+        collectByName(searchRoot, "dropdownContainer", 24)
+    ) do
+        local parent = safe(function() return widget:GetParentWidget() end)
+        local grandParent = parent ~= nil and safe(function()
+            return parent:GetParentWidget()
+        end) or nil
+        if parent ~= nil and grandParent ~= nil and
+            widgetName(parent) == "Root" and widgetName(grandParent) == "Root" then
+            local ok = pcall(function()
+                widget:SetMargin(dropdownLeft, 188.0, 0.0, 0.0)
+                widget:FlagForVisualInvalidation()
+            end)
+            if ok then dropdownContainers = dropdownContainers + 1 end
+        end
     end
 
     local rightFluff = positionRightFluff(searchRoot, geometry, 24)
 
     debugLog(string.format(
-        "%s backpack %s: buttonHints=%d rightFluff=%d",
-        LOG_PREFIX, reason, buttonHints, rightFluff
+        "%s backpack %s: widenedRoots=%d inventoryCanvases=%d canvasWidth=%.2f rmkSearch=%d gridColumns=%d gridExtraWidth=%.2f buttonHints=%d dropdowns=%d dropdownLeft=%.2f rightFluff=%d",
+        LOG_PREFIX, reason, widenedRoots, widenedInventoryCanvases,
+        inventoryCanvasWidth, positionedRmkSearchContainers,
+        expandedGridColumns, additionalGridWidth, buttonHints,
+        dropdownContainers, dropdownLeft, rightFluff
+    ))
+end
+
+local function resizeRevisedBackpackItemRow(controller)
+    if controller == nil then return 0 end
+    local root = safe(function() return controller:GetRootWidget() end)
+    if root == nil then return 0 end
+
+    local resized = 0
+    -- RevisedBackpackItemController resolves these as
+    -- item/nameContainer and item/type. They are deliberately handled when
+    -- each virtual row is created instead of scanning the current list pool.
+    for _, widget in ipairs(collectByName(root, "nameContainer", 4)) do
+        local ok = pcall(function()
+            local size = widget:GetSize()
+            widget:SetSize(1242.0, size ~= nil and size.Y or 80.0)
+            widget:FlagForVisualInvalidation()
+
+            -- The text keeps its own vanilla wrapping boundary even when its
+            -- parent cell grows. Widen it explicitly and keep names one-line.
+            for _, nameText in ipairs(collectByName(widget, "name", 2)) do
+                local textSize = nameText:GetSize()
+                nameText:SetSize(1110.0, textSize ~= nil and textSize.Y or 80.0)
+                nameText:SetWrapping(false, 1110.0, textWrappingPolicy.Default)
+                nameText:SetWrappingAtPosition(1110.0)
+                nameText:FlagForVisualInvalidation()
+            end
+        end)
+        if ok then resized = resized + 1 end
+    end
+    for _, widget in ipairs(collectByName(root, "type", 4)) do
+        local ok = pcall(function()
+            local size = widget:GetSize()
+            widget:SetSize(718.0, size ~= nil and size.Y or 80.0)
+            -- Update the text layout boundary as well as the widget box, or
+            -- the vanilla 418-wide ellipsis remains cached.
+            widget:SetWrapping(false, 718.0, textWrappingPolicy.Default)
+            widget:SetWrappingAtPosition(718.0)
+            widget:FlagForVisualInvalidation()
+        end)
+        if ok then resized = resized + 1 end
+    end
+    for _, widget in ipairs(collectByName(root, "shadow", 4)) do
+        local ok = pcall(function()
+            widget:SetMargin(-1000.0, 0.0, 0.0, 0.0)
+            widget:SetSize(5200.0, 80.0)
+            widget:SetOpacity(0.03)
+            widget:FlagForVisualInvalidation()
+        end)
+        if ok then resized = resized + 1 end
+    end
+    for _, widget in ipairs(collectByName(root, "selection", 4)) do
+        local ok = pcall(function()
+            widget:SetSize(2988.0, 80.0)
+            widget:FlagForVisualInvalidation()
+        end)
+        if ok then resized = resized + 1 end
+    end
+    return resized
+end
+
+local function applyRevisedBackpackLayout(controller, reason)
+    cancelMainMenuRetries("revised backpack " .. tostring(reason))
+    ensureMenuPillarsDisabled("revised backpack " .. tostring(reason))
+    local geometry = getTargetGeometry()
+    if geometry == nil or controller == nil then return end
+
+    -- Revised Backpack works best as one cohesive table/preview layout. Keep
+    -- its validated 21:9 composition on wider displays instead of pushing the
+    -- preview all the way to the physical right edge.
+    local layoutWidth = math.min(geometry.contentWidth, LEGACY_21X9_CONTENT_WIDTH)
+
+    -- Revised Backpack owns this controller, so its root is specifically the
+    -- library Root at Name Path Root/Root in revised_backpack.inkwidget.
+    -- No vanilla Backpack widget is touched by this compatibility path.
+    local root = safe(function() return controller:GetRootWidget() end)
+    if root == nil then return end
+
+    local ok = pcall(function()
+        root:SetSize(layoutWidth, REFERENCE_HEIGHT)
+        root:SetMargin(0.0, 0.0, 0.0, 0.0)
+        root:FlagForVisualInvalidation()
+    end)
+
+    -- Header cells are direct children at Root/Root. Item rows use different
+    -- paths and are handled by RevisedBackpackItemController.OnInitialize.
+    local nameColumns = 0
+    for _, widget in ipairs(collectByName(root, "nameContainer", 16)) do
+        local parent = safe(function() return widget:GetParentWidget() end)
+        if parent == nil or widgetName(parent) ~= "item" then
+            local resized = pcall(function()
+                local size = widget:GetSize()
+                widget:SetSize(1272.0, size ~= nil and size.Y or 80.0)
+                widget:FlagForVisualInvalidation()
+            end)
+            if resized then nameColumns = nameColumns + 1 end
+        end
+    end
+
+    local typeColumns = 0
+    for _, widget in ipairs(collectByName(root, "typeContainer", 16)) do
+        local resized = pcall(function()
+            local size = widget:GetSize()
+            widget:SetSize(718.0, size ~= nil and size.Y or 80.0)
+            widget:FlagForVisualInvalidation()
+        end)
+        if resized then typeColumns = typeColumns + 1 end
+    end
+
+    local scrollAreas = 0
+    local scrollAreaWidth = 2188.0 + math.max(
+        0.0,
+        layoutWidth - 3840.0
+    ) * (900.0 / 1320.0)
+    for _, widget in ipairs(collectByName(root, "scrollArea", 12)) do
+        local resized = pcall(function()
+            local size = widget:GetSize()
+            widget:SetSize(scrollAreaWidth, size ~= nil and size.Y or 1400.0)
+            widget:FlagForVisualInvalidation()
+        end)
+        if resized then scrollAreas = scrollAreas + 1 end
+    end
+
+    for _, widget in ipairs(collectByName(root, "selectedItemsCount", 12)) do
+        pcall(function()
+            widget:SetMargin(0.0, 440.0, 1980.0, 0.0)
+            widget:FlagForVisualInvalidation()
+        end)
+    end
+
+    for _, previewGarment in ipairs(collectByName(root, "previewGarment", 12)) do
+        pcall(function()
+            previewGarment:SetSize(1895.0, 1895.0)
+            previewGarment:SetMargin(0.0, 120.0, 0.0, 0.0)
+            previewGarment:FlagForVisualInvalidation()
+        end)
+        for _, rootName in ipairs({ "root", "Root" }) do
+            for _, previewRoot in ipairs(collectByName(previewGarment, rootName, 4)) do
+                pcall(function()
+                    previewRoot:SetSize(1895.0, 1895.0)
+                    previewRoot:SetMargin(0.0, 0.0, 0.0, 0.0)
+                    previewRoot:FlagForVisualInvalidation()
+                end)
+            end
+        end
+        for _, wrapper in ipairs(collectByName(previewGarment, "wrapper", 4)) do
+            pcall(function()
+                wrapper:SetSize(1895.0, 1895.0)
+                wrapper:SetMargin(0.0, 0.0, 0.0, 0.0)
+                wrapper:FlagForVisualInvalidation()
+            end)
+        end
+        for _, preview in ipairs(collectByName(previewGarment, "preview", 4)) do
+            pcall(function()
+                preview:SetSize(1895.0, 1895.0)
+                preview:SetMargin(0.0, 0.0, 0.0, 0.0)
+                preview:FlagForVisualInvalidation()
+            end)
+        end
+    end
+
+    for _, previewItem in ipairs(collectByName(root, "previewItem", 12)) do
+        pcall(function()
+            previewItem:SetSize(1995.0, 1330.0)
+            previewItem:SetMargin(0.0, 400.0, 0.0, 0.0)
+            previewItem:FlagForVisualInvalidation()
+        end)
+        for _, rootName in ipairs({ "root", "Root" }) do
+            for _, previewRoot in ipairs(collectByName(previewItem, rootName, 4)) do
+                pcall(function()
+                    previewRoot:SetSize(1995.0, 1330.0)
+                    previewRoot:SetMargin(0.0, 0.0, 0.0, 0.0)
+                    previewRoot:FlagForVisualInvalidation()
+                end)
+            end
+        end
+        for _, wrapper in ipairs(collectByName(previewItem, "wrapper", 4)) do
+            pcall(function()
+                wrapper:SetSize(1995.0, 1330.0)
+                wrapper:SetMargin(0.0, 0.0, 0.0, 0.0)
+                wrapper:FlagForVisualInvalidation()
+            end)
+        end
+        for _, preview in ipairs(collectByName(previewItem, "preview", 4)) do
+            pcall(function()
+                preview:SetSize(1995.0, 1330.0)
+                preview:SetMargin(0.0, 0.0, 0.0, 0.0)
+                preview:FlagForVisualInvalidation()
+            end)
+        end
+    end
+
+    debugLog(string.format(
+        "%s revised backpack %s: root=%s screenWidth=%.2f layoutWidth=%.2f nameColumns=%d typeColumns=%d scrollAreas=%d scrollAreaWidth=%.2f",
+        LOG_PREFIX, reason, tostring(ok), geometry.contentWidth, layoutWidth,
+        nameColumns, typeColumns, scrollAreas, scrollAreaWidth
     ))
 end
 
@@ -554,20 +1573,306 @@ local function applyAuxiliaryMenuLayout(controller, reason, menuLabel, hintWidge
     local searchRoot = getMenuVirtualWindow()
     if searchRoot == nil then return end
 
+    local craftingRoots = 0
+    local craftingPanels = 0
+    local craftingGridWidgets = 0
+    local craftingGridRebuilt = false
+    local shardsRoots = 0
+    local shardsEntryViews = 0
+    if menuLabel == "crafting" then
+        -- Path: Root/Root/<target Root>/tabs. Only widen the direct parent of
+        -- tabs; the sibling Root layers retain their vanilla geometry.
+        for _, tabs in ipairs(collectByName(searchRoot, "tabs", 24)) do
+            local parent = safe(function() return tabs:GetParentWidget() end)
+            local grandParent = parent ~= nil and safe(function()
+                return parent:GetParentWidget()
+            end) or nil
+            if parent ~= nil and grandParent ~= nil and
+                widgetName(parent) == "Root" and
+                widgetName(grandParent) == "Root" then
+                local ok = pcall(function()
+                    parent:SetSize(geometry.contentWidth, REFERENCE_HEIGHT)
+                    parent:FlagForVisualInvalidation()
+                end)
+                if ok then craftingRoots = craftingRoots + 1 end
+            end
+        end
+
+        -- Temporary one-shot development dump. The delayed layout pass also
+        -- reaches this block, so asynchronously populated children are caught.
+        for _, panel in ipairs(collectByName(searchRoot, "craftingPanel", 24)) do
+            craftingPanels = craftingPanels + 1
+            local resized, rebuilt = applyCraftingGridLayout(panel, geometry)
+            craftingGridWidgets = craftingGridWidgets + resized
+            craftingGridRebuilt = craftingGridRebuilt or rebuilt
+            dumpCraftingWidgetTree(panel)
+            dumpCraftingControllers(controller, panel)
+        end
+    end
+
+    if menuLabel == "shards" then
+        -- Path: Root/Root/list_wrapper. Widen only the Root that directly
+        -- owns the shard list and entry view.
+        for _, listWrapper in ipairs(collectByName(searchRoot, "list_wrapper", 24)) do
+            local parent = safe(function() return listWrapper:GetParentWidget() end)
+            local grandParent = parent ~= nil and safe(function()
+                return parent:GetParentWidget()
+            end) or nil
+            if parent ~= nil and grandParent ~= nil and
+               widgetName(parent) == "Root" and
+               widgetName(grandParent) == "Root" then
+                local ok = pcall(function()
+                    parent:SetSize(geometry.contentWidth, REFERENCE_HEIGHT)
+                    parent:FlagForVisualInvalidation()
+                end)
+                if ok then shardsRoots = shardsRoots + 1 end
+            end
+        end
+
+        for _, entryView in ipairs(collectByName(searchRoot, "entryView", 24)) do
+            shardsEntryViews = shardsEntryViews + 1
+            -- entryView starts at X=1650. Keep the vanilla 210-unit reserve
+            -- on the right and consume everything in between: 3300 INK units
+            -- (2200 physical pixels at 3440x1440) on the 21:9 reference.
+            local entryWidth = math.max(2000.0, geometry.contentWidth - 1860.0)
+            pcall(function()
+                entryView:SetSize(entryWidth, 1600.0)
+                entryView:FlagForVisualInvalidation()
+            end)
+
+            for _, line in ipairs(collectByName(entryView, "line2", 4)) do
+                pcall(function()
+                    line:SetSize(entryWidth - 80.0, 2.0)
+                    line:FlagForVisualInvalidation()
+                end)
+            end
+
+            for _, scrollArea in ipairs(
+                collectByName(entryView, "EntryScrollArea", 4)
+            ) do
+                pcall(function()
+                    scrollArea:SetSize(entryWidth - 175.0, 1600.0)
+                    scrollArea:FlagForVisualInvalidation()
+                end)
+
+                for _, text in ipairs(collectByName(scrollArea, "text", 4)) do
+                    local parent = safe(function() return text:GetParentWidget() end)
+                    if parent ~= nil and widgetName(parent) == "container" then
+                        pcall(function()
+                            local textWidth = entryWidth - 400.0
+                            text:SetSize(textWidth, 1600.0)
+                            text:SetWrapping(
+                                false, textWidth, textWrappingPolicy.Default
+                            )
+                            text:SetWrappingAtPosition(textWidth)
+                            text:FlagForVisualInvalidation()
+                        end)
+                    end
+                end
+            end
+
+            dumpShardsEntryViewTree(entryView)
+        end
+    end
+
     local buttonHints = 0
     for _, widget in ipairs(collectByName(searchRoot, hintWidgetName, 24)) do
         local ok = pcall(function()
-            widget:SetMargin(
-                0.0, 0.0, extendMarginToEdge(-540.0, geometry), 50.0
-            )
+            if menuLabel == "crafting" then
+                -- Crafting's widened Root already carries this widget to the
+                -- ultrawide edge; retain its vanilla inset.
+                widget:SetMargin(0.0, 0.0, 120.0, 50.0)
+            elseif menuLabel == "shards" then
+                -- Shards' widened Root naturally carries its button hints;
+                -- restore the vanilla right inset for this screen only.
+                widget:SetMargin(0.0, 0.0, 200.0, 50.0)
+            else
+                widget:SetMargin(
+                    0.0, 0.0, extendMarginToEdge(-540.0, geometry), 50.0
+                )
+            end
         end)
         if ok then buttonHints = buttonHints + 1 end
     end
 
     local rightFluff = positionRightFluff(searchRoot, geometry, 24)
     debugLog(string.format(
-        "%s %s %s: %s=%d rightFluff=%d",
-        LOG_PREFIX, menuLabel, reason, hintWidgetName, buttonHints, rightFluff
+        "%s %s %s: %s=%d rightFluff=%d craftingRoots=%d craftingPanels=%d craftingGridWidgets=%d craftingGridRebuilt=%s shardsRoots=%d shardsEntryViews=%d",
+        LOG_PREFIX, menuLabel, reason, hintWidgetName, buttonHints, rightFluff,
+        craftingRoots, craftingPanels, craftingGridWidgets,
+        tostring(craftingGridRebuilt), shardsRoots, shardsEntryViews
+    ))
+end
+
+local function applyGalleryLayout(controller, reason)
+    cancelMainMenuRetries("gallery " .. tostring(reason))
+    ensureMenuPillarsDisabled("gallery " .. tostring(reason))
+    local geometry = getTargetGeometry()
+    if geometry == nil or controller == nil then return end
+
+    local searchRoot = getMenuVirtualWindow()
+    if searchRoot == nil then return end
+
+    -- 4660 at the legacy 5160-wide 21:9 canvas, with the same additional
+    -- width carried to narrower/wider supported aspect ratios.
+    local screenshotsWidth = geometry.contentWidth - 500.0
+    -- inkGridWidget has no content-justification property: its cells are
+    -- packed from the top-left. Compensate progressively for the additional
+    -- 32:9 space while preserving the validated zero margin at 21:9.
+    local listLeftMargin = math.max(0.0, math.min(
+        200.0,
+        200.0 * (geometry.contentWidth - LEGACY_21X9_CONTENT_WIDTH) /
+        (7680.0 - LEGACY_21X9_CONTENT_WIDTH)
+    ))
+    local widenedRoots = 0
+    local resizedAreas = 0
+    local resizedLists = 0
+
+    for _, screenshotsArea in ipairs(
+        collectByName(searchRoot, "screenshots_area", 24)
+    ) do
+        local areaSize = safe(function() return screenshotsArea:GetSize() end)
+        local areaChanged = pcall(function()
+            screenshotsArea:SetSize(
+                screenshotsWidth,
+                areaSize ~= nil and areaSize.Y or 1600.0
+            )
+            screenshotsArea:FlagForVisualInvalidation()
+        end)
+        if areaChanged then resizedAreas = resizedAreas + 1 end
+
+        for _, list in ipairs(collectByName(screenshotsArea, "list", 4)) do
+            local listSize = safe(function() return list:GetSize() end)
+            local listChanged = pcall(function()
+                list:SetSize(
+                    screenshotsWidth,
+                    listSize ~= nil and listSize.Y or 1600.0
+                )
+                list:SetMargin(listLeftMargin, 0.0, 0.0, 0.0)
+                list:FlagForVisualInvalidation()
+            end)
+            if listChanged then resizedLists = resizedLists + 1 end
+        end
+
+        -- Path: Root/Root/global wrapper/scroll_listwrapper/screenshots_area.
+        local targetRoot = screenshotsArea
+        for _ = 1, 3 do
+            targetRoot = targetRoot ~= nil and safe(function()
+                return targetRoot:GetParentWidget()
+            end) or nil
+        end
+        if targetRoot ~= nil and widgetName(targetRoot) == "Root" then
+            local rootChanged = pcall(function()
+                targetRoot:SetSize(geometry.contentWidth, REFERENCE_HEIGHT)
+                targetRoot:FlagForVisualInvalidation()
+            end)
+            if rootChanged then widenedRoots = widenedRoots + 1 end
+        end
+    end
+
+    local inputHints = 0
+    for _, widget in ipairs(collectByName(searchRoot, "inputHints", 24)) do
+        local margin = safe(function() return widget:GetMargin() end)
+        local ok = pcall(function()
+            widget:SetMargin(
+                margin ~= nil and margin.left or 0.0,
+                margin ~= nil and margin.top or 0.0,
+                200.0,
+                margin ~= nil and margin.bottom or 50.0
+            )
+            widget:FlagForVisualInvalidation()
+        end)
+        if ok then inputHints = inputHints + 1 end
+    end
+
+    if reason == "delayed" then
+        dumpGalleryControllers(controller, searchRoot)
+    end
+
+    debugLog(string.format(
+        "%s gallery %s: roots=%d areas=%d lists=%d width=%.2f inputHints=%d",
+        LOG_PREFIX, reason, widenedRoots, resizedAreas, resizedLists,
+        screenshotsWidth, inputHints
+    ))
+end
+
+local function applyBreachProtocolLayout(controller, reason)
+    cancelMainMenuRetries("breach protocol " .. tostring(reason))
+    ensureMenuPillarsDisabled("breach protocol " .. tostring(reason))
+    local geometry = getTargetGeometry()
+    if geometry == nil or controller == nil then return end
+
+    local searchRoot = safe(function() return controller:GetRootWidget() end)
+    if searchRoot == nil then searchRoot = getMenuVirtualWindow() end
+    if searchRoot == nil then return end
+
+    -- Preserve the authored 3840-wide minigame itself and extend only its
+    -- fullscreen decoration by half of the additional width on each side.
+    local horizontalInset = math.max(
+        0.0, (geometry.contentWidth - 3840.0) * 0.5
+    )
+    local tempBackgrounds = 0
+    local headerHighlights = 0
+    local backgroundLoops = 0
+    local refreshedFluffColumns = 0
+
+    for _, widget in ipairs(collectByName(searchRoot, "tempBG", 24)) do
+        local ok = pcall(function()
+            widget:SetMargin(
+                -horizontalInset, 0.0, -horizontalInset, 0.0
+            )
+            widget:FlagForVisualInvalidation()
+        end)
+        if ok then tempBackgrounds = tempBackgrounds + 1 end
+    end
+
+    for _, widget in ipairs(
+        collectByName(searchRoot, "header_ux_highlight", 24)
+    ) do
+        local ok = pcall(function()
+            widget:SetAnchor(inkEAnchor.TopLeft)
+            widget:SetAnchorPoint(Vector2.new({ X = 0.0, Y = 0.0 }))
+            widget:SetMargin(-horizontalInset, 425.0, 0.0, 0.0)
+            widget:SetSize(geometry.contentWidth, 170.0)
+            widget:FlagForVisualInvalidation()
+        end)
+        if ok then headerHighlights = headerHighlights + 1 end
+    end
+
+    for _, widget in ipairs(collectByName(searchRoot, "bg_loop", 24)) do
+        local ok = pcall(function()
+            widget:SetMargin(
+                -horizontalInset, 0.0, -horizontalInset, 0.0
+            )
+            widget:FlagForVisualInvalidation()
+        end)
+        if ok then backgroundLoops = backgroundLoops + 1 end
+    end
+
+    -- fluff_columns is not resized, but Ink keeps its pre-layout position
+    -- cached after the sibling backgrounds are extended. Toggling a visible
+    -- widget off and immediately back on forces the same harmless refresh as
+    -- the confirmed Ink Inspector workaround, before the next rendered frame.
+    for _, widget in ipairs(
+        collectByName(searchRoot, "fluff_columns", 24)
+    ) do
+        local ok = pcall(function()
+            local wasVisible = widget:IsVisible()
+            if wasVisible then
+                widget:SetVisible(false)
+                widget:SetVisible(true)
+            else
+                widget:FlagForVisualInvalidation()
+            end
+        end)
+        if ok then refreshedFluffColumns = refreshedFluffColumns + 1 end
+    end
+
+    debugLog(string.format(
+        "%s breach protocol %s: inset=%.2f width=%.2f tempBG=%d header=%d bgLoop=%d fluffColumns=%d",
+        LOG_PREFIX, reason, horizontalInset, geometry.contentWidth,
+        tempBackgrounds, headerHighlights, backgroundLoops,
+        refreshedFluffColumns
     ))
 end
 
@@ -906,7 +2211,7 @@ local function applyTimeSkipLayout(controller, reason)
     end
 end
 
-local function applyStealthRunnerPopupLayout()
+local function applyGameNotificationLayouts()
     local geometry = getTargetGeometry()
     if geometry == nil then return false end
 
@@ -916,27 +2221,239 @@ local function applyStealthRunnerPopupLayout()
     local virtualWindow = layer ~= nil and safe(function() return layer:GetVirtualWindow() end) or nil
     if virtualWindow == nil then return false end
 
+    local changed = false
+
+    -- The first Root is expressed in the 1080-high viewport coordinate space,
+    -- not the 2160-high widget coordinate space used by popup contents. Apart
+    -- from being the normal layout, restoring it here also removes any stale
+    -- value left by a live Ink Inspector or diagnostic edit.
+    local layerRoot = safe(function() return virtualWindow:GetWidget(0) end)
+    local layerRootSize = layerRoot ~= nil and safe(function()
+        return layerRoot:GetSize()
+    end) or nil
+    if layerRoot ~= nil and layerRootSize ~= nil and
+       (math.abs(layerRootSize.X - geometry.viewportWidth) > 0.5 or
+        math.abs(layerRootSize.Y - VIEWPORT_HEIGHT) > 0.5) then
+        local ok = pcall(function()
+            layerRoot:SetSize(geometry.viewportWidth, VIEWPORT_HEIGHT)
+            layerRoot:FlagForVisualInvalidation()
+        end)
+        if ok then changed = true end
+    end
+
+    -- Supported context paths:
+    -- Reset Attributes:
+    --   Root/NotificationsContainer/UNINITIALIZED_WIDGET/Root/notification
+    -- Gallery photo viewer:
+    --   Root/NotificationsContainer/UNINITIALIZED_WIDGET/Root/wrapper
+    -- Journal database-entry detail:
+    --   Root/NotificationsContainer/UNINITIALIZED_WIDGET/
+    --   RootNotifications/entryView
+    -- Walk that short fixed hierarchy directly. The popup controller exposed
+    -- by CET does not own this outer 3840x2160 Root, so controller-based
+    -- resizing cannot reach it.
+    local layerRootChildren = layerRoot ~= nil and
+        (safe(function() return layerRoot:GetNumChildren() end) or 0) or 0
+    for containerIndex = 0, layerRootChildren - 1 do
+        local notificationsContainer = safe(function()
+            return layerRoot:GetWidget(containerIndex)
+        end)
+        local containerName = notificationsContainer ~= nil and
+            widgetName(notificationsContainer) or ""
+
+        -- Breach Protocol tutorial overlay:
+        -- Root/TutorialOverlayContainer/Root. The child remains authored in
+        -- the centered 3840-wide space, so move it by half the extra width.
+        if containerName == "TutorialOverlayContainer" then
+            local tutorialInset = math.max(
+                0.0, (geometry.contentWidth - 3840.0) * 0.5
+            )
+            local tutorialChildCount = safe(function()
+                return notificationsContainer:GetNumChildren()
+            end) or 0
+            for tutorialIndex = 0, tutorialChildCount - 1 do
+                local tutorialRoot = safe(function()
+                    return notificationsContainer:GetWidget(tutorialIndex)
+                end)
+                local ownsGlowList = false
+                local tutorialRootChildren = tutorialRoot ~= nil and
+                    (safe(function()
+                        return tutorialRoot:GetNumChildren()
+                    end) or 0) or 0
+                for childIndex = 0, tutorialRootChildren - 1 do
+                    local child = safe(function()
+                        return tutorialRoot:GetWidget(childIndex)
+                    end)
+                    if child ~= nil and
+                       widgetName(child) == "glowListContainer3" then
+                        ownsGlowList = true
+                        break
+                    end
+                end
+                if tutorialRoot ~= nil and
+                   widgetName(tutorialRoot) == "Root" and ownsGlowList then
+                    local margin = safe(function()
+                        return tutorialRoot:GetMargin()
+                    end)
+                    if margin == nil or
+                       math.abs(margin.left - tutorialInset) > 0.5 or
+                       math.abs(margin.top) > 0.5 or
+                       math.abs(margin.right) > 0.5 or
+                       math.abs(margin.bottom) > 0.5 then
+                        local ok = pcall(function()
+                            tutorialRoot:SetMargin(
+                                tutorialInset, 0.0, 0.0, 0.0
+                            )
+                            tutorialRoot:FlagForVisualInvalidation()
+                        end)
+                        if ok then changed = true end
+                    end
+
+                    for childIndex = 0, tutorialRootChildren - 1 do
+                        local child = safe(function()
+                            return tutorialRoot:GetWidget(childIndex)
+                        end)
+                        if child ~= nil and widgetName(child) == "bg" then
+                            local backgroundMargin = safe(function()
+                                return child:GetMargin()
+                            end)
+                            local backgroundSize = safe(function()
+                                return child:GetSize()
+                            end)
+                            if backgroundMargin == nil or backgroundSize == nil or
+                               math.abs(
+                                   backgroundSize.X - geometry.contentWidth
+                               ) > 0.5 or
+                               math.abs(
+                                   backgroundMargin.left + tutorialInset
+                               ) > 0.5 or
+                               math.abs(backgroundMargin.top) > 0.5 or
+                               math.abs(backgroundMargin.right) > 0.5 or
+                               math.abs(backgroundMargin.bottom) > 0.5 then
+                                local ok = pcall(function()
+                                    child:SetSize(
+                                        geometry.contentWidth,
+                                        backgroundSize ~= nil and
+                                            backgroundSize.Y or REFERENCE_HEIGHT
+                                    )
+                                    child:SetMargin(
+                                        -tutorialInset, 0.0, 0.0, 0.0
+                                    )
+                                    child:FlagForVisualInvalidation()
+                                end)
+                                if ok then changed = true end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+
+        if notificationsContainer ~= nil and
+           containerName == "NotificationsContainer" then
+            local slotCount = safe(function()
+                return notificationsContainer:GetNumChildren()
+            end) or 0
+            for slotIndex = 0, slotCount - 1 do
+                local slot = safe(function()
+                    return notificationsContainer:GetWidget(slotIndex)
+                end)
+                local popupCount = slot ~= nil and
+                    (safe(function() return slot:GetNumChildren() end) or 0) or 0
+                for popupIndex = 0, popupCount - 1 do
+                    local popupRoot = safe(function()
+                        return slot:GetWidget(popupIndex)
+                    end)
+                    local popupSize = popupRoot ~= nil and safe(function()
+                        return popupRoot:GetSize()
+                    end) or nil
+                    local popupRootName = popupRoot ~= nil and
+                        widgetName(popupRoot) or ""
+                    if popupRoot ~= nil and
+                       (popupRootName == "Root" or
+                        popupRootName == "RootNotifications") and
+                       popupSize ~= nil and popupSize.X >= 3800.0 and
+                       popupSize.X <= 3860.0 and popupSize.Y >= 2100.0 and
+                       popupSize.Y <= 2200.0 then
+                        local childCount = safe(function()
+                            return popupRoot:GetNumChildren()
+                        end) or 0
+                        for childIndex = 0, childCount - 1 do
+                            local child = safe(function()
+                                return popupRoot:GetWidget(childIndex)
+                            end)
+                            local childName = child ~= nil and widgetName(child) or ""
+                            local isResetAttributes =
+                                popupRootName == "Root" and
+                                childName == "notification"
+                            local isGalleryViewer =
+                                popupRootName == "Root" and
+                                childName == "wrapper"
+                            local isJournalEntry =
+                                popupRootName == "RootNotifications" and
+                                childName == "entryView"
+                            if isResetAttributes or isGalleryViewer or
+                               isJournalEntry then
+                                local ok = pcall(function()
+                                    popupRoot:SetSize(
+                                        geometry.contentWidth,
+                                        REFERENCE_HEIGHT
+                                    )
+                                    popupRoot:FlagForVisualInvalidation()
+                                end)
+                                if ok then
+                                    changed = true
+                                    ensureMenuPillarsDisabled(
+                                        isResetAttributes and
+                                            "reset attributes notification tree" or
+                                        isGalleryViewer and
+                                            "gallery viewer notification tree" or
+                                            "journal entry notification tree"
+                                    )
+                                end
+
+                                -- The Gallery viewer also owns a separate
+                                -- 3849-wide background. Widening its parent
+                                -- does not affect this fixed-size child.
+                                if isGalleryViewer then
+                                    for _, background in ipairs(
+                                        collectByName(popupRoot, "bg", 4)
+                                    ) do
+                                        local backgroundSize = safe(function()
+                                            return background:GetSize()
+                                        end)
+                                        if backgroundSize ~= nil and
+                                           backgroundSize.X >= 3800.0 and
+                                           backgroundSize.X <= 3900.0 then
+                                            local backgroundChanged = pcall(function()
+                                                background:SetSize(
+                                                    geometry.contentWidth,
+                                                    backgroundSize.Y
+                                                )
+                                                background:FlagForVisualInvalidation()
+                                            end)
+                                            if backgroundChanged then changed = true end
+                                        end
+                                    end
+                                end
+                                break
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+
     -- StealthRunner's popup is spawned dynamically below the notifications
     -- layer. Restrict the search to this short-lived retry window; never scan
     -- the notification tree continuously while the game is running.
-    local changed = false
     local vignetteWidgets = collectByName(virtualWindow, "vignette", 12)
     for index, widget in ipairs(vignetteWidgets) do
         -- The popup contains a rectangle and an image with the same name.
         -- Only the first (the rectangle shown by Ink Inspector) is the
         -- 16:9 canvas that must be widened; leave the image texture intact.
         if index > 1 then break end
-        if not stealthRunnerProbePrinted then
-            local names = {}
-            local ancestor = widget
-            for level = 0, 8 do
-                if ancestor == nil then break end
-                table.insert(names, widgetName(ancestor))
-                ancestor = safe(function() return ancestor:GetParentWidget() end)
-            end
-            print(LOG_PREFIX .. " StealthRunner vignette path=" .. table.concat(names, "/"))
-            stealthRunnerProbePrinted = true
-        end
         -- The notifications layer only contains live popup widgets here;
         -- resize the discovered vignette without relying on a translated
         -- Name Path segment that may not be exposed by GetName().
@@ -1067,64 +2584,6 @@ local function applySettingsLayout(controller, reason)
             end
         end
 
-        if not settingsProbePrinted and reason == "probe" then
-            local function vectorText(value)
-                return value ~= nil and string.format("%.1f,%.1f", value.X, value.Y) or "nil"
-            end
-
-            local function marginText(value)
-                return value ~= nil and string.format(
-                    "%.1f,%.1f,%.1f,%.1f",
-                    value.left, value.top, value.right, value.bottom
-                ) or "nil"
-            end
-
-            local function rectText(value)
-                return value ~= nil and string.format(
-                    "L%.1f T%.1f R%.1f B%.1f W%.1f",
-                    value.Left, value.Top, value.Right, value.Bottom,
-                    value.Right - value.Left
-                ) or "nil"
-            end
-
-            local function dumpWidget(label, target)
-                if target == nil then return end
-                print(string.format(
-                    "[UW SETTINGS PROBE] %s name=%s screen=%s size=%s desired=%s margin=%s padding=%s anchor=%s h=%s v=%s rule=%s fit=%s scale=%s translation=%s",
-                    label,
-                    widgetName(target),
-                    rectText(safe(function() return GetScreenPosition(target) end)),
-                    vectorText(safe(function() return target:GetSize() end)),
-                    vectorText(safe(function() return target:GetDesiredSize() end)),
-                    marginText(safe(function() return target:GetMargin() end)),
-                    marginText(safe(function() return target:GetPadding() end)),
-                    tostring(safe(function() return target:GetAnchor() end)),
-                    tostring(safe(function() return target:GetHAlign() end)),
-                    tostring(safe(function() return target:GetVAlign() end)),
-                    tostring(safe(function() return target:GetSizeRule() end)),
-                    tostring(safe(function() return target:GetFitToContent() end)),
-                    vectorText(safe(function() return target:GetScale() end)),
-                    vectorText(safe(function() return target:GetTranslation() end))
-                ))
-            end
-
-            local ancestor = widget
-            for level = 0, 5 do
-                if ancestor == nil then break end
-                dumpWidget("ancestor" .. tostring(level), ancestor)
-                ancestor = safe(function() return ancestor:GetParentWidget() end)
-            end
-
-            local childCount = safe(function() return widget:GetNumChildren() end) or 0
-            for index = 0, childCount - 1 do
-                local child = safe(function() return widget:GetWidget(index) end)
-                local name = child ~= nil and widgetName(child) or ""
-                if name == "bg1" or name == "bg2" or name == "bg3" then
-                    dumpWidget(name, child)
-                end
-            end
-            settingsProbePrinted = true
-        end
     end
 
     local rightSides = 0
@@ -1219,9 +2678,11 @@ registerForEvent("onInit", function()
     ))
     debugLog(string.format("%s %s v%s initialized", LOG_PREFIX, MOD_NAME, VERSION))
 
-    -- CET may initialize either on the real main menu or after a startup mod
-    -- has already begun loading a save. Only an explicit true may arm the
-    -- expensive asynchronous main-menu scene search.
+    -- On a real startup / pre-game reload, the asynchronous main-menu
+    -- background still needs its finite discovery window. During an in-game
+    -- CET reload, leave it disarmed; the dedicated main-menu lifecycle event
+    -- will arm it if the game later returns there. Game.GetPlayer() is not a
+    -- reliable discriminator because a residual player can exist pre-game.
     local preGame = isPreGame()
     if preGame == true then
         mainMenuRetryBudget = 1200
@@ -1319,9 +2780,15 @@ registerForEvent("onInit", function()
             if widgetName(widget) == expectedName then
                 local geometry = getTargetGeometry()
                 if geometry == nil then return end
-                widget:SetMargin(
-                    0.0, 0.0, extendMarginToEdge(-540.0, geometry), 50.0
-                )
+                if activeHubMenu == "backpack" then
+                    widget:SetMargin(0.0, 0.0, 120.0, 50.0)
+                elseif activeHubMenu == "shards" then
+                    widget:SetMargin(0.0, 0.0, 200.0, 50.0)
+                else
+                    widget:SetMargin(
+                        0.0, 0.0, extendMarginToEdge(-540.0, geometry), 50.0
+                    )
+                end
                 debugLog(LOG_PREFIX .. " " .. activeHubMenu .. " " .. expectedName .. " initialized")
                 return
             end
@@ -1334,6 +2801,30 @@ registerForEvent("onInit", function()
         table.insert(pendingLayouts, { controller = controller, kind = "backpack", elapsed = 0.0, delay = 0.0 })
     end)
 
+    -- Optional Revised Backpack compatibility. Observe registration is wrapped
+    -- because the class does not exist at all when the mod is not installed.
+    pcall(function()
+        Observe("RevisedBackpack.RevisedBackpackController", "OnInitialize", function(controller)
+            debugLog(LOG_PREFIX .. " Revised Backpack controller observed")
+            applyRevisedBackpackLayout(controller, "OnInitialize")
+            table.insert(pendingLayouts, {
+                controller = controller,
+                kind = "revisedBackpack",
+                elapsed = 0.0
+            })
+        end)
+    end)
+
+    pcall(function()
+        Observe(
+            "RevisedBackpack.RevisedBackpackItemController",
+            "OnInitialize",
+            function(controller)
+                resizeRevisedBackpackItemRow(controller)
+            end
+        )
+    end)
+
     Observe("CraftingMainGameController", "OnInitialize", function(controller)
         applyAuxiliaryMenuLayout(controller, "OnInitialize", "crafting", "buttonHintContainer")
         table.insert(pendingLayouts, { controller = controller, kind = "auxiliary", label = "crafting", hintName = "buttonHintContainer", elapsed = 0.0 })
@@ -1344,14 +2835,38 @@ registerForEvent("onInit", function()
         table.insert(pendingLayouts, { controller = controller, kind = "auxiliary", label = "stats", hintName = "button_hints", elapsed = 0.0 })
     end)
 
+    ObserveBefore("GalleryMenuGameController", "OnInitialize", function(controller)
+        local screenshotsPerPage = getGalleryScreenshotsPerPage()
+        local ok, errorMessage = pcall(function()
+            controller.screenshotsPerPage = screenshotsPerPage
+        end)
+        if not ok then
+            print(LOG_PREFIX .. " gallery page-size update failed: " ..
+                tostring(errorMessage))
+        end
+    end)
+
     Observe("GalleryMenuGameController", "OnInitialize", function(controller)
-        applyAuxiliaryMenuLayout(controller, "OnInitialize", "gallery", "inputHints")
-        table.insert(pendingLayouts, { controller = controller, kind = "auxiliary", label = "gallery", hintName = "inputHints", elapsed = 0.0 })
+        applyGalleryLayout(controller, "OnInitialize")
+        table.insert(pendingLayouts, {
+            controller = controller,
+            kind = "gallery",
+            elapsed = 0.0
+        })
     end)
 
     Observe("ShardsMenuGameController", "OnInitialize", function(controller)
         applyAuxiliaryMenuLayout(controller, "OnInitialize", "shards", "button_hints")
         table.insert(pendingLayouts, { controller = controller, kind = "auxiliary", label = "shards", hintName = "button_hints", elapsed = 0.0 })
+    end)
+
+    Observe("HackingMinigameGameController", "OnInitialize", function(controller)
+        applyBreachProtocolLayout(controller, "OnInitialize")
+        table.insert(pendingLayouts, {
+            controller = controller,
+            kind = "breachProtocol",
+            elapsed = 0.0
+        })
     end)
 
     Observe("gameuiTimeskipGameController", "OnInitialize", function(controller)
@@ -1377,6 +2892,15 @@ registerForEvent("onInit", function()
     Observe("questLogGameController", "OnInitialize", function(controller)
         applyJournalLayout(controller, "OnInitialize")
         table.insert(pendingLayouts, { controller = controller, kind = "journal", elapsed = 0.0 })
+    end)
+
+    Observe("CodexGameController", "OnInitialize", function(controller)
+        applyDatabaseLayout(controller, "OnInitialize")
+        table.insert(pendingLayouts, {
+            controller = controller,
+            kind = "database",
+            elapsed = 0.0
+        })
     end)
 
     Observe("MenuHubLogicController", "OnInitialize", function(controller)
@@ -1434,10 +2958,6 @@ registerForEvent("onInit", function()
         end)
         -- Generic notification controllers are also used for popup resources
         -- that do not update PopupsManager's tutorial blackboard.
-        Observe("gameuiGenericNotificationGameController", "OnInitialize", function()
-            stealthRunnerRetryBudget = 20
-            stealthRunnerRetryTimer = 0.0
-        end)
         Observe("GenericNotificationController", "OnInitialize", function()
             stealthRunnerRetryBudget = 20
             stealthRunnerRetryTimer = 0.0
@@ -1469,11 +2989,33 @@ end)
 registerForEvent("onUpdate", function(deltaTime)
     applySystemNotificationLayout()
 
-    -- Stop immediately when Skip Main Menu (or any equivalent startup mod)
-    -- takes the engine out of pre-game. This prevents recursive main-menu
-    -- discovery from running inside Inventory or another in-game Ink menu.
+    -- A startup mod may bypass the pre-game menu and load the last save
+    -- directly. Cancel the discovery window when the engine leaves its true
+    -- pre-game state so it cannot spill into the first in-game menu.
     if mainMenuRetryBudget > 0 and isPreGame() == false then
         cancelMainMenuRetries("engine left pre-game")
+    end
+
+    if BACKPACK_TREE_DIAGNOSTICS and
+        not backpackTreeDumped and not backpackTreeDumpFailed then
+        backpackTreeScanTimer = backpackTreeScanTimer + deltaTime
+        if backpackTreeScanTimer >= 0.25 then
+            backpackTreeScanTimer = 0.0
+            local searchRoot = getMenuVirtualWindow()
+            if searchRoot ~= nil then
+                for _, inventoryWrapper in ipairs(
+                    collectByName(searchRoot, "inventory_wrapper", 24)
+                ) do
+                    local parent = safe(function()
+                        return inventoryWrapper:GetParentWidget()
+                    end)
+                    if parent ~= nil and widgetName(parent) == "wrapper" then
+                        dumpBackpackWidgetTree(inventoryWrapper)
+                        break
+                    end
+                end
+            end
+        end
     end
 
     if mainMenuPillarPending then
@@ -1505,13 +3047,13 @@ registerForEvent("onUpdate", function(deltaTime)
     -- and avoids a recursive walk every frame.
     stealthRunnerScanTimer = stealthRunnerScanTimer - deltaTime
     if stealthRunnerScanTimer <= 0.0 then
-        applyStealthRunnerPopupLayout()
+        applyGameNotificationLayouts()
         stealthRunnerScanTimer = 0.25
     end
     if stealthRunnerRetryBudget > 0 then
         stealthRunnerRetryTimer = stealthRunnerRetryTimer - deltaTime
         if stealthRunnerRetryTimer <= 0.0 then
-            local found = applyStealthRunnerPopupLayout()
+            local found = applyGameNotificationLayouts()
             stealthRunnerRetryBudget = stealthRunnerRetryBudget - 1
             stealthRunnerRetryTimer = 0.10
             if found then
@@ -1563,8 +3105,16 @@ registerForEvent("onUpdate", function(deltaTime)
                     applyCharacterLayout(item.controller, "delayed")
                 elseif item.kind == "journal" then
                     applyJournalLayout(item.controller, "delayed")
+                elseif item.kind == "database" then
+                    applyDatabaseLayout(item.controller, "delayed")
+                elseif item.kind == "gallery" then
+                    applyGalleryLayout(item.controller, "delayed")
+                elseif item.kind == "breachProtocol" then
+                    applyBreachProtocolLayout(item.controller, "delayed")
                 elseif item.kind == "backpack" then
                     applyBackpackLayout(item.controller, "delayed")
+                elseif item.kind == "revisedBackpack" then
+                    applyRevisedBackpackLayout(item.controller, "delayed")
                 elseif item.kind == "auxiliary" then
                     applyAuxiliaryMenuLayout(item.controller, "delayed", item.label, item.hintName)
                 elseif item.kind == "hub" then
@@ -1589,7 +3139,10 @@ end)
 
 registerForEvent("onShutdown", function()
     pendingLayouts = {}
-    settingsProbePrinted = false
+    backpackTreeDumped = false
+    backpackTreeScanTimer = 0.0
+    backpackTreeDumpFailed = false
+    craftingGridRebuiltControllers = {}
     mainMenuRetryBudget = 0
     mainMenuRetryTimer = 0.0
     mainMenuPillarTimer = 0.0
@@ -1600,6 +3153,5 @@ registerForEvent("onShutdown", function()
     mainMenuSceneReadyPasses = 0
     stealthRunnerRetryBudget = 0
     stealthRunnerRetryTimer = 0.0
-    stealthRunnerProbePrinted = false
     stealthRunnerScanTimer = 0.0
 end)
