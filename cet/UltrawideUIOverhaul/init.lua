@@ -1,5 +1,5 @@
 local MOD_NAME = "Ultrawide UI Overhaul"
-local VERSION = "2.0.0"
+local VERSION = "2.2.0"
 local LOG_PREFIX = "[UltrawideUIOverhaul]"
 local DEBUG = false
 
@@ -25,14 +25,22 @@ local GALLERY_CONTROLLER_DIAGNOSTICS = false
 local GALLERY_CONTROLLER_DIAGNOSTIC_FILE = "gallery_controller_dump.log"
 local SHARDS_TREE_DIAGNOSTICS = false
 local SHARDS_TREE_DIAGNOSTIC_FILE = "shards_entry_view_dump.log"
+local STASH_TREE_DIAGNOSTICS = false
+local STASH_TREE_DIAGNOSTIC_FILE = "stash_widget_tree_dump.log"
+local STASH_CONTROLLER_DIAGNOSTICS = false
+local STASH_CONTROLLER_DIAGNOSTIC_FILE = "stash_grid_controller_dump.log"
 local GALLERY_VANILLA_SCREENSHOTS_PER_PAGE = 10
 local VANILLA_ASPECT = 16.0 / 9.0
 
 local REFERENCE_HEIGHT = 2160.0
 local VIEWPORT_HEIGHT = 1080.0
 local CAMERA_HEIGHT = 720
+local VANILLA_CONTENT_WIDTH = 3840.0
 local LEGACY_21X9_CONTENT_WIDTH = 5160.0
-local MIN_SUPPORTED_ASPECT = 2.30
+-- Include exact 2:1 modes such as 2880x1440 and 3840x1920. A small tolerance
+-- protects configured/live-resolution rounding without enabling ordinary
+-- 16:9 layouts.
+local MIN_SUPPORTED_ASPECT = 1.99
 local MAX_SUPPORTED_ASPECT = 3.65
 local MAX_21X9_ASPECT = 2.45
 local MIN_32X9_ASPECT = 3.45
@@ -69,6 +77,16 @@ local galleryControllerDumped = false
 local galleryControllerDumpFailed = false
 local shardsTreeDumped = false
 local shardsTreeDumpFailed = false
+local deathMenuActive = false
+local stashMenuActive = false
+local stashLayoutFinalized = false
+local stashGeometryApplied = false
+local stashDataViewsRefreshed = false
+local stashPlayerInventoryPopulated = false
+local stashVendorInventoryPopulated = false
+local stashDataRefreshScheduled = false
+local stashTreeDumped = false
+local stashControllerDumped = false
 local menuHintWidgetNames = {
     cyberware_equip = "button_hints",
     backpack = "button_hints",
@@ -223,7 +241,9 @@ local function getTargetGeometry()
     end
 
     local profile = "intermediate ultrawide"
-    if aspect <= MAX_21X9_ASPECT then
+    if aspect < 2.30 then
+        profile = "2:1"
+    elseif aspect <= MAX_21X9_ASPECT then
         profile = "21:9"
     elseif aspect >= MIN_32X9_ASPECT then
         profile = "32:9"
@@ -245,6 +265,20 @@ local function getGalleryScreenshotsPerPage()
         return GALLERY_VANILLA_SCREENSHOTS_PER_PAGE
     end
 
+    -- Gallery uses two rows. Between 2:1 and 21:9, increase its five vanilla
+    -- columns only when another complete column actually fits: five columns
+    -- at 2:1, then six, then the validated seven columns at 21:9.
+    if geometry.contentWidth < LEGACY_21X9_CONTENT_WIDTH then
+        local twoToOneWidth = 2.0 * REFERENCE_HEIGHT
+        local progress = math.max(0.0, math.min(
+            1.0,
+            (geometry.contentWidth - twoToOneWidth) /
+            (LEGACY_21X9_CONTENT_WIDTH - twoToOneWidth)
+        ))
+        local columns = 5 + math.floor(progress * 2.0 + 0.5)
+        return columns * 2
+    end
+
     -- Scale the vanilla ten entries with the available aspect ratio. The
     -- upper rounding keeps a newly exposed partial slot usable: 14 entries
     -- at 21:9 and 20 entries at 32:9.
@@ -257,15 +291,11 @@ local function getGalleryScreenshotsPerPage()
     )
 end
 
--- The original 21:9 layouts were visually tuned on a 5160-wide INK canvas. Keep
--- those exact values for 21:9, then add only the extra half-width introduced
--- by wider profiles. This makes edge corrections scale to 32:9 without
--- disturbing the already validated 21:9 presentation.
+-- The original layouts were visually tuned at 16:9 and 21:9. Keep the exact
+-- 21:9 values, extend them beyond 21:9, and interpolate them back toward the
+-- vanilla canvas for narrower ultrawide modes such as 2:1.
 local function getExtraHorizontalInset(geometry)
-    return math.max(
-        0.0,
-        (geometry.contentWidth - LEGACY_21X9_CONTENT_WIDTH) * 0.5
-    )
+    return (geometry.contentWidth - LEGACY_21X9_CONTENT_WIDTH) * 0.5
 end
 
 local function extendMarginToEdge(margin, geometry)
@@ -274,6 +304,20 @@ end
 
 local function preserveCenteredMargin(margin, geometry)
     return margin + getExtraHorizontalInset(geometry)
+end
+
+local function interpolateToLegacy21x9(vanillaValue, legacy21x9Value, geometry)
+    local progress = math.max(0.0, math.min(
+        1.0,
+        (geometry.contentWidth - VANILLA_CONTENT_WIDTH) /
+        (LEGACY_21X9_CONTENT_WIDTH - VANILLA_CONTENT_WIDTH)
+    ))
+    return vanillaValue + (legacy21x9Value - vanillaValue) * progress
+end
+
+local function extendLegacy21x9Value(vanillaValue, legacy21x9Value, geometry)
+    return interpolateToLegacy21x9(vanillaValue, legacy21x9Value, geometry) +
+        math.max(0.0, geometry.contentWidth - LEGACY_21X9_CONTENT_WIDTH)
 end
 
 local function dumpBackpackWidgetTree(root)
@@ -1149,6 +1193,407 @@ local function applyJournalLayout(controller, reason)
     ))
 end
 
+local function applyStashLayout(_, reason)
+    if not stashMenuActive then return false end
+    if stashLayoutFinalized then return true end
+    cancelMainMenuRetries("stash " .. tostring(reason))
+    ensureMenuPillarsDisabled("stash " .. tostring(reason))
+    local geometry = getTargetGeometry()
+    if geometry == nil then return false end
+
+    -- Exact Ink hierarchy (the Inspector's Root1/Root2 suffixes are indices;
+    -- both widgets have the runtime name "Root"):
+    -- inkVirtualWindow -> Root -> Root[0, fullscreen_vendor]
+    --                              -> wrapper -> wrapper
+    --                                 -> playerPanel + vendorPanel
+    --                           + Root[1, vendor_hub]
+    local virtualWindow = getMenuVirtualWindow()
+    local outerRoot = virtualWindow ~= nil and safe(function()
+        return virtualWindow:GetWidget(0)
+    end) or nil
+    if outerRoot == nil or widgetName(outerRoot) ~= "Root" then return false end
+
+    -- Once geometry is stable, retries only wait for the two data sources.
+    -- They must not resize/invalidate the visible widgets again.
+    if stashGeometryApplied then
+        return true
+    end
+
+    if STASH_TREE_DIAGNOSTICS and not stashTreeDumped then
+        local file = io.open(STASH_TREE_DIAGNOSTIC_FILE, "w")
+        if file ~= nil then
+            local function text(value)
+                return value ~= nil and tostring(value) or "nil"
+            end
+            local function vector(value)
+                return value ~= nil and string.format("%.2f,%.2f", value.X, value.Y) or "nil"
+            end
+            local function margin(value)
+                return value ~= nil and string.format(
+                    "%.2f,%.2f,%.2f,%.2f",
+                    value.left, value.top, value.right, value.bottom
+                ) or "nil"
+            end
+            local function visit(widget, depth, path)
+                if widget == nil or depth > 20 then return end
+                local children = safe(function() return widget:GetNumChildren() end) or 0
+                file:write(string.format(
+                    "%s%s | class=%s children=%d size=%s desired=%s margin=%s padding=%s anchor=%s anchorPoint=%s hAlign=%s vAlign=%s sizeRule=%s scale=%s translation=%s visible=%s opacity=%s\n",
+                    string.rep("  ", depth), path,
+                    text(safe(function() return widget:GetClassName() end)), children,
+                    vector(safe(function() return widget:GetSize() end)),
+                    vector(safe(function() return widget:GetDesiredSize() end)),
+                    margin(safe(function() return widget:GetMargin() end)),
+                    margin(safe(function() return widget:GetPadding() end)),
+                    text(safe(function() return widget:GetAnchor() end)),
+                    vector(safe(function() return widget:GetAnchorPoint() end)),
+                    text(safe(function() return widget:GetHAlign() end)),
+                    text(safe(function() return widget:GetVAlign() end)),
+                    text(safe(function() return widget:GetSizeRule() end)),
+                    vector(safe(function() return widget:GetScale() end)),
+                    vector(safe(function() return widget:GetTranslation() end)),
+                    text(safe(function() return widget:IsVisible() end)),
+                    text(safe(function() return widget:GetOpacity() end)
+                )))
+                for index = 0, children - 1 do
+                    local child = safe(function() return widget:GetWidget(index) end)
+                    if child ~= nil then
+                        local name = widgetName(child)
+                        if name == "" then name = "<unnamed>" end
+                        visit(child, depth + 1, string.format("%s/%s[%d]", path, name, index))
+                    end
+                end
+            end
+            file:write(string.format("Ultrawide UI Overhaul stash tree dump | %s\n", os.date("%Y-%m-%d %H:%M:%S")))
+            visit(outerRoot, 0, "VirtualWindow[0]/Root")
+            file:flush()
+            file:close()
+            stashTreeDumped = true
+            print(LOG_PREFIX .. " stash widget tree dumped")
+        end
+    end
+
+    local widenedRoots = 0
+    for index = 0, 1 do
+        local child = safe(function() return outerRoot:GetWidget(index) end)
+        if child ~= nil and widgetName(child) == "Root" then
+            local ok = pcall(function()
+                child:SetSize(geometry.contentWidth, REFERENCE_HEIGHT)
+            end)
+            if ok then widenedRoots = widenedRoots + 1 end
+        end
+    end
+
+    -- Each Stash slot is 224 units wide. Panel width is derived from the
+    -- ratio-aware number of complete columns, plus the vanilla 34-unit
+    -- scrollbar allowance. Native translations remain animation-owned.
+    local slotWidth = 224.0
+    -- Scale continuously across the supported range: six vanilla columns at
+    -- 16:9, ten at 21:9 and fifteen at 32:9. This gives 2:1 displays a layout
+    -- that fits their smaller side extensions without overlapping panels.
+    local columnsAt16x9 = 6
+    local columnsAt21x9 = 10
+    local columnsAt32x9 = 15
+    local widthAt16x9 = VANILLA_CONTENT_WIDTH
+    local widthAt21x9 = LEGACY_21X9_CONTENT_WIDTH
+    local widthAt32x9 = 7680.0
+    local targetColumns = columnsAt21x9
+    if geometry.contentWidth < widthAt21x9 then
+        local narrowProgress = math.max(0.0, math.min(
+            1.0,
+            (geometry.contentWidth - widthAt16x9) /
+            (widthAt21x9 - widthAt16x9)
+        ))
+        targetColumns = columnsAt16x9 + math.floor(
+            narrowProgress * (columnsAt21x9 - columnsAt16x9) + 0.5
+        )
+    else
+        local wideProgress = math.max(0.0, math.min(
+            1.0,
+            (geometry.contentWidth - widthAt21x9) /
+            (widthAt32x9 - widthAt21x9)
+        ))
+        targetColumns = columnsAt21x9 + math.floor(
+            wideProgress * (columnsAt32x9 - columnsAt21x9) + 0.5
+        )
+    end
+    local cachedGridWidth = targetColumns * slotWidth
+    local zoneWidth = cachedGridWidth + 34.0
+    local zones = 0
+    local grids = 0
+    for _, zoneName in ipairs({ "playerPanel", "vendorPanel" }) do
+        for _, zone in ipairs(collectByName(outerRoot, zoneName, 8)) do
+            local zoneSize = safe(function() return zone:GetSize() end)
+            if pcall(function()
+                zone:SetSize(zoneWidth, zoneSize ~= nil and zoneSize.Y or 0.0)
+                -- Keep the final positions previously validated with margins
+                -- 635/165 and forced translations -400/+400, but encode the
+                -- effective offsets entirely in layout margins. Translation
+                -- belongs to the native entrance animation and must remain
+                -- under the game's control.
+                local panelInset = interpolateToLegacy21x9(
+                    0.0, 235.0, geometry
+                )
+                if zoneName == "playerPanel" then
+                    zone:SetMargin(panelInset, 0.0, 0.0, 0.0)
+                else
+                    zone:SetMargin(0.0, 0.0, -panelInset, 0.0)
+                end
+            end) then
+                zones = zones + 1
+                for _, container in ipairs(collectByName(zone, "inventoryContainer", 8)) do
+                    local containerSize = safe(function() return container:GetSize() end)
+                    pcall(function()
+                        container:SetSize(zoneWidth, containerSize ~= nil and containerSize.Y or 0.0)
+                    end)
+                end
+                for _, scrollName in ipairs({ "scroll_area", "scrollArea", "stash_scroll_area_cache", "inventory_scroll_area_cache" }) do
+                    for _, scroll in ipairs(collectByName(zone, scrollName, 10)) do
+                        local size = safe(function() return scroll:GetSize() end)
+                        local scrollWidth = math.max(0.0, zoneWidth - 34.0)
+                        pcall(function()
+                            scroll:SetSize(scrollWidth, size ~= nil and size.Y or REFERENCE_HEIGHT)
+                        end)
+                        for _, gridName in ipairs({ "player_virtualgrid", "vendor_virtualgrid" }) do
+                            for _, grid in ipairs(collectByName(scroll, gridName, 4)) do
+                                local gridSize = safe(function() return grid:GetSize() end)
+                                local gridController = safe(function() return grid.logicController end) or
+                                    safe(function() return grid:GetController() end)
+                                local gridResized = pcall(function()
+                                    grid:SetSize(scrollWidth, gridSize ~= nil and gridSize.Y or REFERENCE_HEIGHT)
+                                    grid:FlagForVisualInvalidation()
+                                end)
+                                if gridResized then grids = grids + 1 end
+                            end
+                        end
+                    end
+                end
+                for _, imageName in ipairs({ "inventoryCacheRT", "stashCacheRT" }) do
+                    for _, image in ipairs(collectByName(zone, imageName, 10)) do
+                        local imageSize = safe(function() return image:GetSize() end)
+                        local imageMargin = safe(function() return image:GetMargin() end)
+                        local centerOffset = 0.0
+                        if imageSize ~= nil and imageMargin ~= nil then
+                            centerOffset = imageMargin.left - imageSize.X * 0.5
+                        end
+                        pcall(function()
+                            image:SetSize(cachedGridWidth, imageSize ~= nil and imageSize.Y or REFERENCE_HEIGHT)
+                            image:SetMargin(
+                                cachedGridWidth * 0.5 + centerOffset,
+                                imageMargin ~= nil and imageMargin.top or 0.0,
+                                imageMargin ~= nil and imageMargin.right or 0.0,
+                                imageMargin ~= nil and imageMargin.bottom or 0.0
+                            )
+                            image:FlagForVisualInvalidation()
+                        end)
+                    end
+                end
+                for _, imageName in ipairs({ "inkImageWidget2a", "inkImageWidget2" }) do
+                    for _, image in ipairs(collectByName(zone, imageName, 10)) do
+                        local imageSize = safe(function() return image:GetSize() end)
+                        pcall(function()
+                            image:SetSize(cachedGridWidth, imageSize ~= nil and imageSize.Y or REFERENCE_HEIGHT)
+                            image:FlagForVisualInvalidation()
+                        end)
+                    end
+                end
+                for _, cacheName in ipairs({ "inventory_scroll_area_cache", "stash_scroll_area_cache" }) do
+                    for _, cache in ipairs(collectByName(zone, cacheName, 10)) do
+                        pcall(function() cache:FlagForVisualInvalidation() end)
+                    end
+                end
+                for _, filters in ipairs(collectByName(zone, "filtersContainer", 8)) do
+                    pcall(function()
+                        filters:SetWrappingWidgetCount(8)
+                        filters:FlagForVisualInvalidation()
+                    end)
+                end
+                for _, searchName in ipairs({ "searchContainerPlayer", "searchContainerStorage" }) do
+                    for _, searchContainer in ipairs(collectByName(zone, searchName, 8)) do
+                        pcall(function()
+                            searchContainer:SetHAlign(inkEHorizontalAlign.Right)
+                            searchContainer:SetMargin(0.0, -90.0, 1060.0, 50.0)
+                            searchContainer:FlagForVisualInvalidation()
+                        end)
+                    end
+                end
+            end
+        end
+    end
+
+    if STASH_CONTROLLER_DIAGNOSTICS and not stashControllerDumped then
+        local file = io.open(STASH_CONTROLLER_DIAGNOSTIC_FILE, "w")
+        if file ~= nil then
+            file:write(string.format(
+                "Ultrawide UI Overhaul stash controller dump | %s\n",
+                os.date("%Y-%m-%d %H:%M:%S")
+            ))
+            local function dumpControllers(label, widgets)
+                for index, widget in ipairs(widgets) do
+                    local controller = safe(function() return widget.logicController end) or
+                        safe(function() return widget:GetController() end)
+                    local dump = safe(function() return GameDump(controller) end)
+                    file:write(string.format(
+                        "\n[%s #%d] widgetClass=%s controllerClass=%s\n%s\n",
+                        label, index,
+                        tostring(safe(function() return widget:GetClassName() end)),
+                        tostring(safe(function() return controller:GetClassName() end)),
+                        dump ~= nil and tostring(dump) or "controller unavailable or GameDump failed"
+                    ))
+                end
+            end
+            dumpControllers("content Root", { safe(function() return outerRoot:GetWidget(0) end) })
+            for _, name in ipairs({
+                "playerPanel", "vendorPanel", "inventoryContainer",
+                "player_virtualgrid", "vendor_virtualgrid"
+            }) do
+                dumpControllers(name, collectByName(outerRoot, name, 12))
+            end
+            file:flush()
+            file:close()
+            stashControllerDumped = true
+        end
+    end
+
+    debugLog(string.format(
+        "%s stash %s: directRoots=%d zones=%d grids=%d columns=%d zoneWidth=%.2f width=%.2f",
+        LOG_PREFIX, reason, widenedRoots, zones, grids,
+        targetColumns, zoneWidth, geometry.contentWidth
+    ))
+    local complete = widenedRoots == 2 and zones == 2 and grids >= 2
+    -- BeforeOnInitialize establishes the geometry used by the virtual-grid
+    -- controllers. Finalize only on the post-initialize pass (or a retry),
+    -- after which every remaining scheduled retry becomes a harmless no-op.
+    if complete and reason ~= "BeforeOnInitialize" then
+        stashGeometryApplied = true
+        stashLayoutFinalized = true
+    end
+    return complete
+end
+
+local function refreshStashDataViews(controller)
+    if stashDataViewsRefreshed then return true end
+    if controller == nil then return false end
+    local refreshed = 0
+    local virtualWindow = getMenuVirtualWindow()
+    local outerRoot = virtualWindow ~= nil and safe(function()
+        return virtualWindow:GetWidget(0)
+    end) or nil
+    if outerRoot == nil then return false end
+
+    for _, entry in ipairs({
+        { zone = "playerPanel", callback = "OnPlayerFilterChange" },
+        { zone = "vendorPanel", callback = "OnVendorFilterChange" }
+    }) do
+        local zone = collectByName(outerRoot, entry.zone, 8)[1]
+        local filters = zone ~= nil and collectByName(zone, "filtersContainer", 8)[1] or nil
+        local radioGroup = filters ~= nil and (
+            safe(function() return filters.logicController end) or
+            safe(function() return filters:GetController() end)
+        ) or nil
+        if filters ~= nil then
+            pcall(function()
+                filters:SetWrappingWidgetCount(8)
+                filters:FlagForVisualInvalidation()
+            end)
+        end
+        local selectedIndex = radioGroup ~= nil and (
+            safe(function() return radioGroup:GetSelectedIndex() end) or
+            safe(function() return radioGroup.selectedIndex end)
+        ) or nil
+        if radioGroup ~= nil and selectedIndex ~= nil then
+            local ok = pcall(function()
+                -- Run the complete native filter callback with the already
+                -- selected index. This refreshes all data/layout state without
+                -- visibly changing the active filter.
+                controller[entry.callback](controller, radioGroup, selectedIndex)
+            end)
+            if ok then refreshed = refreshed + 1 end
+        end
+    end
+    stashDataViewsRefreshed = refreshed == 2
+    if STASH_CONTROLLER_DIAGNOSTICS then
+        local file = io.open(STASH_CONTROLLER_DIAGNOSTIC_FILE, "a")
+        if file ~= nil then
+            file:write(string.format(
+                "\nfilter callback refresh: refreshed=%d success=%s time=%s\n",
+                refreshed, tostring(stashDataViewsRefreshed), os.date("%H:%M:%S")
+            ))
+            file:flush()
+            file:close()
+        end
+    end
+    return stashDataViewsRefreshed
+end
+
+local function positionStashSortingDropdown(zoneName, reason)
+    if not stashMenuActive then return false end
+
+    local geometry = getTargetGeometry()
+    local virtualWindow = getMenuVirtualWindow()
+    local outerRoot = virtualWindow ~= nil and safe(function()
+        return virtualWindow:GetWidget(0)
+    end) or nil
+    local contentRoot = outerRoot ~= nil and safe(function()
+        return outerRoot:GetWidget(0)
+    end) or nil
+    if geometry == nil or contentRoot == nil then return false end
+
+    local zone = collectByName(contentRoot, zoneName, 8)[1]
+    local button = zone ~= nil and collectByName(zone, "dropdownButton5", 8)[1] or nil
+    local dropdown = collectByName(contentRoot, "dropdownContainer", 3)[1]
+    if button == nil or dropdown == nil then return false end
+
+    local rootRect = safe(function() return GetScreenPosition(contentRoot) end)
+    local buttonRect = safe(function() return GetScreenPosition(button) end)
+    if rootRect == nil or buttonRect == nil then return false end
+
+    local rootScreenWidth = rootRect.Right - rootRect.Left
+    local rootScreenHeight = rootRect.Bottom - rootRect.Top
+    if rootScreenWidth <= 0.0 or rootScreenHeight <= 0.0 then return false end
+
+    -- The vanilla callbacks use fixed 16:9 translations. Convert the actual
+    -- on-screen button rectangle back into this widened Root's Ink space so
+    -- the shared popup follows either Sort button at every supported ratio.
+    local targetX = (buttonRect.Left - rootRect.Left) *
+        geometry.contentWidth / rootScreenWidth
+    local targetY = (buttonRect.Bottom - rootRect.Top) *
+        REFERENCE_HEIGHT / rootScreenHeight
+
+    -- Translation is added to the dropdown's fixed 300x300 layout slot; it is
+    -- not an absolute Root-space position. Compensate that stable Ink origin.
+    -- Do not infer it from the rendered rectangle: this callback may run more
+    -- than once for one interaction, which would feed our own transform back
+    -- into the next calculation.
+    local baseX = 300.0
+    local baseY = 300.0
+    local x = targetX - baseX
+    local y = targetY - baseY
+
+    local positioned = pcall(function()
+        dropdown:SetTranslation(Vector2.new({ X = x, Y = y }))
+        dropdown:FlagForVisualInvalidation()
+    end)
+
+    if STASH_CONTROLLER_DIAGNOSTICS then
+        local file = io.open(STASH_CONTROLLER_DIAGNOSTIC_FILE, "a")
+        if file ~= nil then
+            file:write(string.format(
+                "\ndropdown %s (%s): positioned=%s translation=%.2f,%.2f target=%.2f,%.2f base=%.2f,%.2f buttonScreen=%.2f,%.2f,%.2f,%.2f rootScreen=%.2f,%.2f,%.2f,%.2f time=%s\n",
+                zoneName, tostring(reason), tostring(positioned), x, y,
+                targetX, targetY, baseX, baseY,
+                buttonRect.Left, buttonRect.Top, buttonRect.Right, buttonRect.Bottom,
+                rootRect.Left, rootRect.Top, rootRect.Right, rootRect.Bottom,
+                os.date("%H:%M:%S")
+            ))
+            file:flush()
+            file:close()
+        end
+    end
+
+    return positioned
+end
+
 local function applyDatabaseLayout(controller, reason)
     cancelMainMenuRetries("database " .. tostring(reason))
     ensureMenuPillarsDisabled("database " .. tostring(reason))
@@ -1179,9 +1624,8 @@ local function applyBackpackLayout(controller, reason)
     local widenedRoots = 0
     local widenedInventoryCanvases = 0
     local positionedRmkSearchContainers = 0
-    local inventoryCanvasWidth = 3990.0 + math.max(
-        0.0,
-        geometry.contentWidth - LEGACY_21X9_CONTENT_WIDTH
+    local inventoryCanvasWidth = extendLegacy21x9Value(
+        2720.0, 3990.0, geometry
     )
     for _, wrapper in ipairs(collectByName(searchRoot, "wrapper", 24)) do
         local parent = safe(function() return wrapper:GetParentWidget() end)
@@ -1336,9 +1780,8 @@ local function applyBackpackLayout(controller, reason)
     end
 
     local dropdownContainers = 0
-    local dropdownLeft = 4146.0 + math.max(
-        0.0,
-        geometry.contentWidth - LEGACY_21X9_CONTENT_WIDTH
+    local dropdownLeft = extendLegacy21x9Value(
+        2879.0, 4146.0, geometry
     )
     for _, widget in ipairs(
         collectByName(searchRoot, "dropdownContainer", 24)
@@ -1370,8 +1813,27 @@ end
 
 local function resizeRevisedBackpackItemRow(controller)
     if controller == nil then return 0 end
+    local geometry = getTargetGeometry()
+    if geometry == nil then return 0 end
     local root = safe(function() return controller:GetRootWidget() end)
     if root == nil then return 0 end
+
+    local nameContainerWidth = interpolateToLegacy21x9(
+        772.0, 1242.0, geometry
+    )
+    local nameTextWidth = interpolateToLegacy21x9(
+        640.0, 1110.0, geometry
+    )
+    local typeWidth = interpolateToLegacy21x9(418.0, 718.0, geometry)
+    local rowEffectWidth = interpolateToLegacy21x9(
+        3840.0, 5200.0, geometry
+    )
+    local rowEffectMargin = interpolateToLegacy21x9(
+        0.0, -1000.0, geometry
+    )
+    local selectionWidth = interpolateToLegacy21x9(
+        2088.0, 2988.0, geometry
+    )
 
     local resized = 0
     -- RevisedBackpackItemController resolves these as
@@ -1380,16 +1842,22 @@ local function resizeRevisedBackpackItemRow(controller)
     for _, widget in ipairs(collectByName(root, "nameContainer", 4)) do
         local ok = pcall(function()
             local size = widget:GetSize()
-            widget:SetSize(1242.0, size ~= nil and size.Y or 80.0)
+            widget:SetSize(
+                nameContainerWidth, size ~= nil and size.Y or 80.0
+            )
             widget:FlagForVisualInvalidation()
 
             -- The text keeps its own vanilla wrapping boundary even when its
             -- parent cell grows. Widen it explicitly and keep names one-line.
             for _, nameText in ipairs(collectByName(widget, "name", 2)) do
                 local textSize = nameText:GetSize()
-                nameText:SetSize(1110.0, textSize ~= nil and textSize.Y or 80.0)
-                nameText:SetWrapping(false, 1110.0, textWrappingPolicy.Default)
-                nameText:SetWrappingAtPosition(1110.0)
+                nameText:SetSize(
+                    nameTextWidth, textSize ~= nil and textSize.Y or 80.0
+                )
+                nameText:SetWrapping(
+                    false, nameTextWidth, textWrappingPolicy.Default
+                )
+                nameText:SetWrappingAtPosition(nameTextWidth)
                 nameText:FlagForVisualInvalidation()
             end
         end)
@@ -1398,19 +1866,19 @@ local function resizeRevisedBackpackItemRow(controller)
     for _, widget in ipairs(collectByName(root, "type", 4)) do
         local ok = pcall(function()
             local size = widget:GetSize()
-            widget:SetSize(718.0, size ~= nil and size.Y or 80.0)
+            widget:SetSize(typeWidth, size ~= nil and size.Y or 80.0)
             -- Update the text layout boundary as well as the widget box, or
             -- the vanilla 418-wide ellipsis remains cached.
-            widget:SetWrapping(false, 718.0, textWrappingPolicy.Default)
-            widget:SetWrappingAtPosition(718.0)
+            widget:SetWrapping(false, typeWidth, textWrappingPolicy.Default)
+            widget:SetWrappingAtPosition(typeWidth)
             widget:FlagForVisualInvalidation()
         end)
         if ok then resized = resized + 1 end
     end
     for _, widget in ipairs(collectByName(root, "shadow", 4)) do
         local ok = pcall(function()
-            widget:SetMargin(-1000.0, 0.0, 0.0, 0.0)
-            widget:SetSize(5200.0, 80.0)
+            widget:SetMargin(rowEffectMargin, 0.0, 0.0, 0.0)
+            widget:SetSize(rowEffectWidth, 80.0)
             widget:SetOpacity(0.03)
             widget:FlagForVisualInvalidation()
         end)
@@ -1418,7 +1886,7 @@ local function resizeRevisedBackpackItemRow(controller)
     end
     for _, widget in ipairs(collectByName(root, "selection", 4)) do
         local ok = pcall(function()
-            widget:SetSize(2988.0, 80.0)
+            widget:SetSize(selectionWidth, 80.0)
             widget:FlagForVisualInvalidation()
         end)
         if ok then resized = resized + 1 end
@@ -1436,6 +1904,47 @@ local function applyRevisedBackpackLayout(controller, reason)
     -- its validated 21:9 composition on wider displays instead of pushing the
     -- preview all the way to the physical right edge.
     local layoutWidth = math.min(geometry.contentWidth, LEGACY_21X9_CONTENT_WIDTH)
+    local headerNameWidth = interpolateToLegacy21x9(
+        772.0, 1272.0, geometry
+    )
+    local typeWidth = interpolateToLegacy21x9(418.0, 718.0, geometry)
+    local selectedItemsRight = interpolateToLegacy21x9(
+        1080.0, 1980.0, geometry
+    )
+    -- Narrower-than-21:9 layouts need proportionally smaller previews so the
+    -- table and preview do not overlap. Give exact 2:1 layouts a ten-percent
+    -- visual boost, then taper it back to the validated size at 21:9. The
+    -- boost is also zero at vanilla width and remains capped for every ratio
+    -- wider than 21:9.
+    local narrowProgress = math.max(0.0, math.min(
+        1.0,
+        (geometry.contentWidth - VANILLA_CONTENT_WIDTH) /
+        (LEGACY_21X9_CONTENT_WIDTH - VANILLA_CONTENT_WIDTH)
+    ))
+    local twoToOneProgress =
+        (2.0 * REFERENCE_HEIGHT - VANILLA_CONTENT_WIDTH) /
+        (LEGACY_21X9_CONTENT_WIDTH - VANILLA_CONTENT_WIDTH)
+    local previewBoost = 1.0
+    if narrowProgress <= twoToOneProgress then
+        previewBoost = 1.0 + 0.10 * narrowProgress / twoToOneProgress
+    elseif narrowProgress < 1.0 then
+        previewBoost = 1.0 + 0.10 *
+            (1.0 - narrowProgress) / (1.0 - twoToOneProgress)
+    end
+
+    -- interpolateToLegacy21x9 itself is capped at 1.0, therefore 21:9 and
+    -- every wider ratio retain the exact validated 21:9 preview sizes.
+    local garmentPreviewSize = interpolateToLegacy21x9(
+        1395.0, 1895.0, geometry
+    ) * previewBoost
+    local garmentPreviewTop = 120.0
+    local itemPreviewWidth = interpolateToLegacy21x9(
+        1395.0, 1995.0, geometry
+    ) * previewBoost
+    local itemPreviewHeight = interpolateToLegacy21x9(
+        930.0, 1330.0, geometry
+    ) * previewBoost
+    local itemPreviewTop = 400.0
 
     -- Revised Backpack owns this controller, so its root is specifically the
     -- library Root at Name Path Root/Root in revised_backpack.inkwidget.
@@ -1457,7 +1966,9 @@ local function applyRevisedBackpackLayout(controller, reason)
         if parent == nil or widgetName(parent) ~= "item" then
             local resized = pcall(function()
                 local size = widget:GetSize()
-                widget:SetSize(1272.0, size ~= nil and size.Y or 80.0)
+                widget:SetSize(
+                    headerNameWidth, size ~= nil and size.Y or 80.0
+                )
                 widget:FlagForVisualInvalidation()
             end)
             if resized then nameColumns = nameColumns + 1 end
@@ -1468,7 +1979,7 @@ local function applyRevisedBackpackLayout(controller, reason)
     for _, widget in ipairs(collectByName(root, "typeContainer", 16)) do
         local resized = pcall(function()
             local size = widget:GetSize()
-            widget:SetSize(718.0, size ~= nil and size.Y or 80.0)
+            widget:SetSize(typeWidth, size ~= nil and size.Y or 80.0)
             widget:FlagForVisualInvalidation()
         end)
         if resized then typeColumns = typeColumns + 1 end
@@ -1490,21 +2001,21 @@ local function applyRevisedBackpackLayout(controller, reason)
 
     for _, widget in ipairs(collectByName(root, "selectedItemsCount", 12)) do
         pcall(function()
-            widget:SetMargin(0.0, 440.0, 1980.0, 0.0)
+            widget:SetMargin(0.0, 440.0, selectedItemsRight, 0.0)
             widget:FlagForVisualInvalidation()
         end)
     end
 
     for _, previewGarment in ipairs(collectByName(root, "previewGarment", 12)) do
         pcall(function()
-            previewGarment:SetSize(1895.0, 1895.0)
-            previewGarment:SetMargin(0.0, 120.0, 0.0, 0.0)
+            previewGarment:SetSize(garmentPreviewSize, garmentPreviewSize)
+            previewGarment:SetMargin(0.0, garmentPreviewTop, 0.0, 0.0)
             previewGarment:FlagForVisualInvalidation()
         end)
         for _, rootName in ipairs({ "root", "Root" }) do
             for _, previewRoot in ipairs(collectByName(previewGarment, rootName, 4)) do
                 pcall(function()
-                    previewRoot:SetSize(1895.0, 1895.0)
+                    previewRoot:SetSize(garmentPreviewSize, garmentPreviewSize)
                     previewRoot:SetMargin(0.0, 0.0, 0.0, 0.0)
                     previewRoot:FlagForVisualInvalidation()
                 end)
@@ -1512,14 +2023,14 @@ local function applyRevisedBackpackLayout(controller, reason)
         end
         for _, wrapper in ipairs(collectByName(previewGarment, "wrapper", 4)) do
             pcall(function()
-                wrapper:SetSize(1895.0, 1895.0)
+                wrapper:SetSize(garmentPreviewSize, garmentPreviewSize)
                 wrapper:SetMargin(0.0, 0.0, 0.0, 0.0)
                 wrapper:FlagForVisualInvalidation()
             end)
         end
         for _, preview in ipairs(collectByName(previewGarment, "preview", 4)) do
             pcall(function()
-                preview:SetSize(1895.0, 1895.0)
+                preview:SetSize(garmentPreviewSize, garmentPreviewSize)
                 preview:SetMargin(0.0, 0.0, 0.0, 0.0)
                 preview:FlagForVisualInvalidation()
             end)
@@ -1528,14 +2039,14 @@ local function applyRevisedBackpackLayout(controller, reason)
 
     for _, previewItem in ipairs(collectByName(root, "previewItem", 12)) do
         pcall(function()
-            previewItem:SetSize(1995.0, 1330.0)
-            previewItem:SetMargin(0.0, 400.0, 0.0, 0.0)
+            previewItem:SetSize(itemPreviewWidth, itemPreviewHeight)
+            previewItem:SetMargin(0.0, itemPreviewTop, 0.0, 0.0)
             previewItem:FlagForVisualInvalidation()
         end)
         for _, rootName in ipairs({ "root", "Root" }) do
             for _, previewRoot in ipairs(collectByName(previewItem, rootName, 4)) do
                 pcall(function()
-                    previewRoot:SetSize(1995.0, 1330.0)
+                    previewRoot:SetSize(itemPreviewWidth, itemPreviewHeight)
                     previewRoot:SetMargin(0.0, 0.0, 0.0, 0.0)
                     previewRoot:FlagForVisualInvalidation()
                 end)
@@ -1543,14 +2054,14 @@ local function applyRevisedBackpackLayout(controller, reason)
         end
         for _, wrapper in ipairs(collectByName(previewItem, "wrapper", 4)) do
             pcall(function()
-                wrapper:SetSize(1995.0, 1330.0)
+                wrapper:SetSize(itemPreviewWidth, itemPreviewHeight)
                 wrapper:SetMargin(0.0, 0.0, 0.0, 0.0)
                 wrapper:FlagForVisualInvalidation()
             end)
         end
         for _, preview in ipairs(collectByName(previewItem, "preview", 4)) do
             pcall(function()
-                preview:SetSize(1995.0, 1330.0)
+                preview:SetSize(itemPreviewWidth, itemPreviewHeight)
                 preview:SetMargin(0.0, 0.0, 0.0, 0.0)
                 preview:FlagForVisualInvalidation()
             end)
@@ -1713,9 +2224,21 @@ local function applyGalleryLayout(controller, reason)
     local searchRoot = getMenuVirtualWindow()
     if searchRoot == nil then return end
 
-    -- 4660 at the legacy 5160-wide 21:9 canvas, with the same additional
-    -- width carried to narrower/wider supported aspect ratios.
+    -- The Gallery grid is top-left packed rather than content-centered. Below
+    -- 21:9, extrapolating contentWidth - 500 makes the five-column 2:1 grid
+    -- too wide and shifts its visible photos left. Interpolate from the
+    -- validated 3320 width at 2:1 to 4660 at 21:9, then keep carrying all
+    -- additional width through the wider ratios as before.
     local screenshotsWidth = geometry.contentWidth - 500.0
+    if geometry.contentWidth < LEGACY_21X9_CONTENT_WIDTH then
+        local twoToOneWidth = 2.0 * REFERENCE_HEIGHT
+        local narrowProgress = math.max(0.0, math.min(
+            1.0,
+            (geometry.contentWidth - twoToOneWidth) /
+            (LEGACY_21X9_CONTENT_WIDTH - twoToOneWidth)
+        ))
+        screenshotsWidth = 3320.0 + (4660.0 - 3320.0) * narrowProgress
+    end
     -- inkGridWidget has no content-justification property: its cells are
     -- packed from the top-left. Compensate progressively for the additional
     -- 32:9 space while preserving the validated zero margin at 21:9.
@@ -1936,6 +2459,11 @@ local function applyHubLayout(controller, reason)
 end
 
 local function applyPauseMenuLayout(controller, reason)
+    -- The Flatline screen instantiates the same background controller before
+    -- DeathMenuGameController itself. Its scenario flag is therefore the
+    -- earliest reliable discriminator. Never apply Pause Menu geometry there.
+    if deathMenuActive then return end
+
     cancelMainMenuRetries("pause " .. tostring(reason))
     ensureMenuPillarsDisabled("pause " .. tostring(reason))
     local geometry = getTargetGeometry()
@@ -2212,6 +2740,11 @@ local function applyTimeSkipLayout(controller, reason)
 end
 
 local function applyGameNotificationLayouts()
+    -- DeathMenuGameController shares a generic Root/wrapper notification shape
+    -- with the Gallery viewer. Leave the Flatline screen completely vanilla;
+    -- otherwise the Gallery compatibility path widens it by mistake.
+    if deathMenuActive then return false end
+
     local geometry = getTargetGeometry()
     if geometry == nil then return false end
 
@@ -2696,6 +3229,72 @@ registerForEvent("onInit", function()
         tostring(preGame), mainMenuRetryBudget
     ))
 
+    -- Death Menu reuses PauseMenuBackgroundGameController. Detect the target
+    -- scenario before that shared controller is initialized; waiting for
+    -- DeathMenuGameController.OnInitialize is already one frame too late.
+    local menuTransitionSources = {
+        "MenuScenario_Idle",
+        "MenuScenario_BaseMenu",
+        "MenuScenario_PreGameSubMenu",
+        "MenuScenario_SingleplayerMenu"
+    }
+    for _, scenarioClass in ipairs(menuTransitionSources) do
+        local observedScenarioClass = scenarioClass
+        pcall(function()
+            ObserveBefore(observedScenarioClass, "OnLeaveScenario", function(firstArg, menuName)
+                if type(menuName) ~= "userdata" then menuName = firstArg end
+                if cnameEquals(menuName, "MenuScenario_DeathMenu") then
+                    deathMenuActive = true
+                    stealthRunnerRetryBudget = 0
+                    stealthRunnerRetryTimer = 0.0
+                elseif cnameEquals(menuName, "MenuScenario_Storage") then
+                    stashMenuActive = true
+                    stashLayoutFinalized = false
+                    stashGeometryApplied = false
+                    stashDataViewsRefreshed = false
+                    stashPlayerInventoryPopulated = false
+                    stashVendorInventoryPopulated = false
+                    stashDataRefreshScheduled = false
+                    -- The two library instances arrive asynchronously. These
+                    -- finite, exact-path retries cover both fast and slow UI
+                    -- creation without recursively scanning any widget tree.
+                    for _, delay in ipairs({ 0.05, 0.15, 0.35, 0.75, 1.25, 2.0, 3.0 }) do
+                        table.insert(pendingLayouts, {
+                            controller = nil,
+                            kind = "stash",
+                            elapsed = 0.0,
+                            delay = delay
+                        })
+                    end
+                end
+            end)
+        end)
+    end
+
+    pcall(function()
+        ObserveBefore("MenuScenario_DeathMenu", "OnLeaveScenario", function()
+            deathMenuActive = false
+        end)
+    end)
+
+    pcall(function()
+        ObserveBefore("MenuScenario_Storage", "OnLeaveScenario", function()
+            stashMenuActive = false
+            stashLayoutFinalized = false
+            stashGeometryApplied = false
+            stashDataViewsRefreshed = false
+            stashPlayerInventoryPopulated = false
+            stashVendorInventoryPopulated = false
+            stashDataRefreshScheduled = false
+            for index = #pendingLayouts, 1, -1 do
+                if pendingLayouts[index].kind == "stash" or
+                   pendingLayouts[index].kind == "stashDataRefresh" then
+                    table.remove(pendingLayouts, index)
+                end
+            end
+        end)
+    end)
+
     pcall(function()
         Observe("gameuiPreGameMenuGameController", "OnInitialize", function()
             diagnosticLog("event: gameuiPreGameMenuGameController.OnInitialize")
@@ -2735,6 +3334,79 @@ registerForEvent("onInit", function()
     Observe("gameuiInventoryGameController", "OnInitialize", function(controller)
         applyInventoryLayout(controller, "OnInitialize")
         table.insert(pendingLayouts, { controller = controller, kind = "inventory", elapsed = 0.0 })
+    end)
+
+    ObserveBefore("gameuiInGameMenuGameController", "OnInitialize", function(controller)
+        if not stashMenuActive then return end
+        applyStashLayout(controller, "BeforeOnInitialize")
+    end)
+
+    Observe("gameuiInGameMenuGameController", "OnInitialize", function(controller)
+        if not stashMenuActive then return end
+        applyStashLayout(controller, "OnInitialize")
+    end)
+
+    Observe("FullscreenVendorGameController", "OnInitialize", function(controller)
+        if not stashMenuActive then return end
+        applyStashLayout(controller, "FullscreenVendor.OnInitialize")
+    end)
+
+    pcall(function()
+        Observe(
+            "FullscreenVendorGameController",
+            "OnPlayerSortingButtonClicked",
+            function()
+                positionStashSortingDropdown(
+                    "playerPanel",
+                    "OnPlayerSortingButtonClicked"
+                )
+            end
+        )
+    end)
+
+    pcall(function()
+        Observe(
+            "FullscreenVendorGameController",
+            "OnVendorSortingButtonClicked",
+            function()
+                positionStashSortingDropdown(
+                    "vendorPanel",
+                    "OnVendorSortingButtonClicked"
+                )
+            end
+        )
+    end)
+
+    pcall(function()
+        Observe("FullscreenVendorGameController", "PopulatePlayerInventory", function(controller)
+            if not stashMenuActive then return end
+            stashPlayerInventoryPopulated = true
+            if stashVendorInventoryPopulated and not stashDataRefreshScheduled then
+                stashDataRefreshScheduled = true
+                table.insert(pendingLayouts, {
+                    controller = controller,
+                    kind = "stashDataRefresh",
+                    elapsed = 0.0,
+                    delay = 0.20
+                })
+            end
+        end)
+    end)
+
+    pcall(function()
+        Observe("FullscreenVendorGameController", "PopulateVendorInventory", function(controller)
+            if not stashMenuActive then return end
+            stashVendorInventoryPopulated = true
+            if stashPlayerInventoryPopulated and not stashDataRefreshScheduled then
+                stashDataRefreshScheduled = true
+                table.insert(pendingLayouts, {
+                    controller = controller,
+                    kind = "stashDataRefresh",
+                    elapsed = 0.0,
+                    delay = 0.20
+                })
+            end
+        end)
     end)
 
     Observe("CyberwareMainGameController", "OnInitialize", function(controller)
@@ -2931,6 +3603,19 @@ registerForEvent("onInit", function()
         table.insert(pendingLayouts, { controller = controller, kind = "pause", elapsed = 0.0, delay = 0.0 })
     end)
 
+    ObserveBefore("DeathMenuGameController", "OnInitialize", function()
+        deathMenuActive = true
+        -- Do not let a notification retry armed immediately before death
+        -- inspect and modify the Flatline widget tree.
+        stealthRunnerRetryBudget = 0
+        stealthRunnerRetryTimer = 0.0
+    end)
+
+    Observe("DeathMenuGameController", "OnUninitialize", function()
+        deathMenuActive = false
+        stealthRunnerScanTimer = 0.0
+    end)
+
     Observe("SingleplayerMenuGameController", "OnSavesForLoadReady", function(controller)
         diagnosticLog("event: SingleplayerMenuGameController.OnSavesForLoadReady")
         mainMenuPillarPending = false
@@ -3099,6 +3784,11 @@ registerForEvent("onUpdate", function(deltaTime)
             local ok, errorMessage = pcall(function()
                 if item.kind == "inventory" then
                     applyInventoryLayout(item.controller, "delayed")
+                elseif item.kind == "stash" then
+                    applyStashLayout(item.controller, "delayed")
+                elseif item.kind == "stashDataRefresh" then
+                    stashDataViewsRefreshed = false
+                    refreshStashDataViews(item.controller)
                 elseif item.kind == "cyberware" then
                     applyCyberwareLayout(item.controller, "delayed")
                 elseif item.kind == "character" then
@@ -3154,4 +3844,14 @@ registerForEvent("onShutdown", function()
     stealthRunnerRetryBudget = 0
     stealthRunnerRetryTimer = 0.0
     stealthRunnerScanTimer = 0.0
+    deathMenuActive = false
+    stashMenuActive = false
+    stashLayoutFinalized = false
+    stashGeometryApplied = false
+    stashDataViewsRefreshed = false
+    stashPlayerInventoryPopulated = false
+    stashVendorInventoryPopulated = false
+    stashDataRefreshScheduled = false
+    stashTreeDumped = false
+    stashControllerDumped = false
 end)
