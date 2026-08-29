@@ -2,17 +2,17 @@
 
 ## Short description
 
-Extends Cyberpunk 2077’s menus, working areas and fullscreen backgrounds across 21:9 and 32:9 displays while coordinating the stock side pillars during startup and loading.
+Extends Cyberpunk 2077’s menus, working areas and fullscreen backgrounds across ultrawide displays from 2:1 through 32:9 while coordinating the stock side pillars during startup and loading.
 
 ## Description
 
-Ultrawide UI Overhaul adapts Cyberpunk 2077’s interface for 21:9, intermediate ultrawide and 32:9 displays. Version 2.0 goes beyond backgrounds: major inventory and content views now use the extra horizontal workspace instead of remaining confined to the central 16:9 area. The mod also coordinates the game’s black side pillars so startup and loading screens remain clean.
+Ultrawide UI Overhaul adapts Cyberpunk 2077’s interface for 2:1, 21:9, intermediate ultrawide and 32:9 displays. Major inventory and content views use the extra horizontal workspace instead of remaining confined to the central 16:9 area. The mod coordinates the game’s black side pillars so startup and loading screens remain clean.
 
 ## Features
 
-- Dynamic 21:9 and 32:9 support for the main menu, pause menu and in-game menus.
+- Dynamic layout support from 2:1 through 32:9 for the main menu, pause menu and in-game menus.
 - Full-width world map background with synchronized markers and widgets.
-- Expanded Backpack and Crafting grids with more visible items and recipes.
+- Expanded Backpack, Stash and Crafting grids with more visible items and recipes.
 - Expanded Gallery pages and Shards reading area.
 - Coverage for inventory, cyberware, character, journal, database, settings, mod settings, stats, gallery, shards, save/load, Breach Protocol and related popup views.
 - Black pillars are restored during startup and loading, then removed at the appropriate menu and world states.
@@ -23,7 +23,7 @@ Ultrawide UI Overhaul adapts Cyberpunk 2077’s interface for 21:9, intermediate
 - Cyberpunk 2077 version 2.31 (the native hook is version-locked).
 - RED4ext.
 - Cyber Engine Tweaks (CET).
-- A supported ultrawide display from approximately 21:9 through 32:9.
+- A supported ultrawide display from 2:1 through 32:9.
 
 ## Installation with Vortex
 

@@ -1,10 +1,10 @@
 # Ultrawide UI Overhaul
 
-Current release: **2.0.0**
+Current release: **2.2.0**
 
 RED4ext plugin (`BlackPillarsRemover`) that prevents Cyberpunk 2077's fullscreen compositor from
 adding 16:9 side pillars when an ultrawide menu or background is intentionally
-laid out across a 21:9 or 32:9 display.
+laid out across a display from 2:1 through 32:9.
 
 The plugin does not move widgets and does not alter menu layout by itself.
 Widget placement is handled separately by the CET script in
@@ -20,14 +20,15 @@ Widget placement is handled separately by the CET script in
 
 - Full-width 21:9 and 32:9 world map with synchronized map geometry, markers,
   district outlines and GPS path;
-- expanded Backpack, Crafting, Gallery and Shards layouts that use the added
+- expanded Backpack, Stash, Crafting, Gallery and Shards layouts that use the added
   horizontal workspace instead of merely extending their backgrounds;
 - ultrawide backgrounds and repositioned edge widgets across the vanilla
   fullscreen menus, popup views and Breach Protocol;
 - coordinated stock pillars during startup, loading screens, the main menu and
   gameplay;
-- ratio-aware support covering 21:9, intermediate ultrawide and 32:9 modes,
-  including 1920x816, 2560x1000, 2560x1080, 3440x1440 and 3200x900 tests;
+- ratio-aware support covering 2:1, 21:9, intermediate ultrawide and 32:9
+  modes, including 2880x1440, 1920x816, 2560x1000, 2560x1080, 3440x1440
+  and 3200x900 tests;
 - optional UI compatibility for Cleaner Main Menu and Pause Menu, Preem Menu
   StealthRunner and Revised Backpack.
 
@@ -36,6 +37,23 @@ Widget placement is handled separately by the CET script in
 The hook is version-locked to Cyberpunk 2077 2.31. It checks the expected bytes
 at the target RVA and refuses to install on an unknown executable. A game update
 may require a new RVA/signature before the plugin can be used safely.
+
+## Version 2.2.0
+
+- Added proportional 2:1 layout support, validated at 2880x1440 and suitable
+  for equivalent modes such as 3840x1920.
+- Interpolated narrow-ultrawide margins, work areas and item-grid geometry
+  between the vanilla 16:9 canvas and the established 21:9 layouts.
+- Added ratio-aware Revised Backpack columns and preview sizing below 21:9,
+  while preserving its validated 21:9 composition on wider displays.
+
+## Version 2.1.0
+
+- Added a full ultrawide Stash overhaul with ratio-aware player and storage
+  grids, expanded filters, optional Stash Search placement and dynamic sorting
+  dropdown positioning.
+- Isolated the Flatline screen from shared ultrawide Pause Menu and Gallery
+  transformations so its animated layout remains vanilla.
 
 ## Version 2.0.0
 
