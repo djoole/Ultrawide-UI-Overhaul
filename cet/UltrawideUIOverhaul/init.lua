@@ -1,7 +1,13 @@
 local MOD_NAME = "Ultrawide UI Overhaul"
-local VERSION = "2.2.0"
+local VERSION = "2.2.1-TEST-BackpackPreInit"
 local LOG_PREFIX = "[UltrawideUIOverhaul]"
 local DEBUG = false
+
+-- Temporary lifecycle diagnostics for the Backpack CTD hotfix test.
+local BACKPACK_LAYOUT_ENABLED = true
+local BACKPACK_LIFECYCLE_DIAGNOSTICS = true
+local BACKPACK_LIFECYCLE_DIAGNOSTIC_FILE =
+    "backpack_lifecycle_diagnostic.log"
 
 -- Diagnostic build switch:
 --   true  = write live main-menu diagnostics for testers
@@ -46,6 +52,7 @@ local MAX_21X9_ASPECT = 2.45
 local MIN_32X9_ASPECT = 3.45
 
 local pendingLayouts = {}
+local backpackLayoutAppliedControllers = {}
 local activeHubMenu = ""
 -- Never assume that CET initialization happens on the pre-game menu. A
 -- Reload All Mods performed in the playable world recreates this script too;
@@ -131,6 +138,19 @@ end
 local function safe(callback)
     local ok, value = pcall(callback)
     return ok and value or nil
+end
+
+local function backpackLifecycleLog(message)
+    if not BACKPACK_LIFECYCLE_DIAGNOSTICS then return end
+    local file = io.open(BACKPACK_LIFECYCLE_DIAGNOSTIC_FILE, "a")
+    if file ~= nil then
+        file:write(string.format(
+            "[%s] [BackpackLifecycle] %s\n",
+            os.date("%Y-%m-%d %H:%M:%S"), tostring(message)
+        ))
+        file:flush()
+        file:close()
+    end
 end
 
 local function isPreGame()
@@ -1615,11 +1635,38 @@ end
 local function applyBackpackLayout(controller, reason)
     cancelMainMenuRetries("backpack " .. tostring(reason))
     ensureMenuPillarsDisabled("backpack " .. tostring(reason))
+    if not BACKPACK_LAYOUT_ENABLED then
+        debugLog(LOG_PREFIX .. " Backpack Safe Mode active; expanded layout skipped")
+        backpackLifecycleLog("expanded layout skipped by safe mode")
+        return
+    end
     local geometry = getTargetGeometry()
-    if geometry == nil or controller == nil then return end
+    if geometry == nil or controller == nil then
+        backpackLifecycleLog(string.format(
+            "application aborted: reason=%s controller=%s geometry=%s",
+            tostring(reason), tostring(controller), tostring(geometry)
+        ))
+        return
+    end
+    if backpackLayoutAppliedControllers[controller] then
+        backpackLifecycleLog(
+            "duplicate application rejected: reason=" .. tostring(reason)
+        )
+        return
+    end
 
     local searchRoot = getMenuVirtualWindow()
-    if searchRoot == nil then return end
+    if searchRoot == nil then
+        backpackLifecycleLog(
+            "application aborted: inkMenuLayer virtual window unavailable"
+        )
+        return
+    end
+    backpackLayoutAppliedControllers[controller] = true
+    backpackLifecycleLog(string.format(
+        "single application started: reason=%s controller=%s width=%.2f",
+        tostring(reason), tostring(controller), geometry.contentWidth
+    ))
 
     local widenedRoots = 0
     local widenedInventoryCanvases = 0
@@ -1808,6 +1855,12 @@ local function applyBackpackLayout(controller, reason)
         inventoryCanvasWidth, positionedRmkSearchContainers,
         expandedGridColumns, additionalGridWidth, buttonHints,
         dropdownContainers, dropdownLeft, rightFluff
+    ))
+    backpackLifecycleLog(string.format(
+        "single application completed: roots=%d canvases=%d gridColumns=%d gridExtraWidth=%.2f rmkSearch=%d dropdowns=%d",
+        widenedRoots, widenedInventoryCanvases, expandedGridColumns,
+        additionalGridWidth, positionedRmkSearchContainers,
+        dropdownContainers
     ))
 end
 
@@ -3203,6 +3256,17 @@ local function configureMapCamera(gameObject)
 end
 
 registerForEvent("onInit", function()
+    if BACKPACK_LIFECYCLE_DIAGNOSTICS then
+        local file = io.open(BACKPACK_LIFECYCLE_DIAGNOSTIC_FILE, "w")
+        if file ~= nil then
+            file:write(string.format(
+                "[%s] [BackpackLifecycle] initialized; version=%s\n",
+                os.date("%Y-%m-%d %H:%M:%S"), VERSION
+            ))
+            file:flush()
+            file:close()
+        end
+    end
     initializeDiagnosticLog()
     local displayWidth, displayHeight = GetDisplayResolution()
     diagnosticLog(string.format(
@@ -3423,8 +3487,9 @@ registerForEvent("onInit", function()
             applyCyberwareLayout(scenario, "OnOpenMenu")
             table.insert(pendingLayouts, { controller = scenario, kind = "cyberware", elapsed = 0.0 })
         elseif cnameEquals(menuName, "backpack") then
-            applyBackpackLayout(scenario, "OnOpenMenu")
-            table.insert(pendingLayouts, { controller = scenario, kind = "backpack", elapsed = 0.0, delay = 0.0 })
+            backpackLifecycleLog(
+                "MenuScenario_HubMenu.OnOpenMenu observed; no layout mutation"
+            )
         end
     end)
 
@@ -3437,8 +3502,9 @@ registerForEvent("onInit", function()
             applyCyberwareLayout(scenario, "OnOpenMenu")
             table.insert(pendingLayouts, { controller = scenario, kind = "cyberware", elapsed = 0.0 })
         elseif cnameEquals(menuName, "backpack") then
-            applyBackpackLayout(scenario, "OnOpenMenu")
-            table.insert(pendingLayouts, { controller = scenario, kind = "backpack", elapsed = 0.0, delay = 0.0 })
+            backpackLifecycleLog(
+                "MenuScenario_RadialHubMenu.OnOpenMenu observed; no layout mutation"
+            )
         end
     end)
 
@@ -3468,10 +3534,32 @@ registerForEvent("onInit", function()
         end
     end)
 
-    Observe("BackpackMainGameController", "OnInitialize", function(controller)
-        applyBackpackLayout(controller, "OnInitialize")
-        table.insert(pendingLayouts, { controller = controller, kind = "backpack", elapsed = 0.0, delay = 0.0 })
+    ObserveBefore("BackpackMainGameController", "OnInitialize", function(controller)
+        backpackLifecycleLog(
+            "BackpackMainGameController.BeforeOnInitialize observed"
+        )
+        applyBackpackLayout(controller, "BeforeOnInitialize")
     end)
+
+    Observe("BackpackMainGameController", "OnInitialize", function(controller)
+        backpackLifecycleLog(
+            "BackpackMainGameController.OnInitialize completed; no layout mutation"
+        )
+    end)
+
+    local backpackUninitializeRegistered = pcall(function()
+        Observe("BackpackMainGameController", "OnUninitialize", function(controller)
+            backpackLifecycleLog(
+                "BackpackMainGameController.OnUninitialize observed; guard released"
+            )
+            backpackLayoutAppliedControllers[controller] = nil
+        end)
+    end)
+    if not backpackUninitializeRegistered then
+        backpackLifecycleLog(
+            "BackpackMainGameController.OnUninitialize observer unavailable"
+        )
+    end
 
     -- Optional Revised Backpack compatibility. Observe registration is wrapped
     -- because the class does not exist at all when the mod is not installed.
@@ -3801,8 +3889,6 @@ registerForEvent("onUpdate", function(deltaTime)
                     applyGalleryLayout(item.controller, "delayed")
                 elseif item.kind == "breachProtocol" then
                     applyBreachProtocolLayout(item.controller, "delayed")
-                elseif item.kind == "backpack" then
-                    applyBackpackLayout(item.controller, "delayed")
                 elseif item.kind == "revisedBackpack" then
                     applyRevisedBackpackLayout(item.controller, "delayed")
                 elseif item.kind == "auxiliary" then
@@ -3829,6 +3915,7 @@ end)
 
 registerForEvent("onShutdown", function()
     pendingLayouts = {}
+    backpackLayoutAppliedControllers = {}
     backpackTreeDumped = false
     backpackTreeScanTimer = 0.0
     backpackTreeDumpFailed = false
