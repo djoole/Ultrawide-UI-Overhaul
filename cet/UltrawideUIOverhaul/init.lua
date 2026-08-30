@@ -1,5 +1,5 @@
 local MOD_NAME = "Ultrawide UI Overhaul"
-local VERSION = "2.2.1-TEST-BackpackPreInit"
+local VERSION = "2.2.1-TEST-BackpackPreInitSearchPostInit"
 local LOG_PREFIX = "[UltrawideUIOverhaul]"
 local DEBUG = false
 
@@ -1632,72 +1632,23 @@ local function applyDatabaseLayout(controller, reason)
     end
 end
 
-local function applyBackpackLayout(controller, reason)
-    cancelMainMenuRetries("backpack " .. tostring(reason))
-    ensureMenuPillarsDisabled("backpack " .. tostring(reason))
-    if not BACKPACK_LAYOUT_ENABLED then
-        debugLog(LOG_PREFIX .. " Backpack Safe Mode active; expanded layout skipped")
-        backpackLifecycleLog("expanded layout skipped by safe mode")
-        return
-    end
+local function positionBackpackSearch(controller, reason)
     local geometry = getTargetGeometry()
-    if geometry == nil or controller == nil then
-        backpackLifecycleLog(string.format(
-            "application aborted: reason=%s controller=%s geometry=%s",
-            tostring(reason), tostring(controller), tostring(geometry)
-        ))
-        return
-    end
-    if backpackLayoutAppliedControllers[controller] then
-        backpackLifecycleLog(
-            "duplicate application rejected: reason=" .. tostring(reason)
-        )
-        return
-    end
+    if geometry == nil or controller == nil then return 0 end
 
     local searchRoot = getMenuVirtualWindow()
     if searchRoot == nil then
         backpackLifecycleLog(
-            "application aborted: inkMenuLayer virtual window unavailable"
+            "search positioning aborted: inkMenuLayer virtual window unavailable"
         )
-        return
+        return 0
     end
-    backpackLayoutAppliedControllers[controller] = true
-    backpackLifecycleLog(string.format(
-        "single application started: reason=%s controller=%s width=%.2f",
-        tostring(reason), tostring(controller), geometry.contentWidth
-    ))
 
-    local widenedRoots = 0
-    local widenedInventoryCanvases = 0
-    local positionedRmkSearchContainers = 0
-    local inventoryCanvasWidth = extendLegacy21x9Value(
-        2720.0, 3990.0, geometry
-    )
+    local positioned = 0
     for _, wrapper in ipairs(collectByName(searchRoot, "wrapper", 24)) do
-        local parent = safe(function() return wrapper:GetParentWidget() end)
-        if parent ~= nil and widgetName(parent) == "Root" then
-            local ok = pcall(function()
-                -- Backpack's second Root owns wrapper and the item-grid area.
-                -- Widen only this branch; the other Root keeps the vanilla
-                -- coordinate space used by the rest of the screen.
-                parent:SetSize(geometry.contentWidth, REFERENCE_HEIGHT)
-            end)
-            if ok then widenedRoots = widenedRoots + 1 end
-        end
-
         for _, canvas in ipairs(
             collectByName(wrapper, "inkCanvasWidget21", 8)
         ) do
-            local ok = pcall(function()
-                local size = canvas:GetSize()
-                canvas:SetSize(inventoryCanvasWidth, size.Y)
-                canvas:FlagForVisualInvalidation()
-            end)
-            if ok then
-                widenedInventoryCanvases = widenedInventoryCanvases + 1
-            end
-
             local filterButtons = collectByName(
                 canvas, "filter_buttons", 4
             )[1]
@@ -1736,12 +1687,84 @@ local function applyBackpackLayout(controller, reason)
                         searchContainer:SetSize(620.0, 80.0)
                         searchContainer:FlagForVisualInvalidation()
                     end)
-                    if searchOk then
-                        positionedRmkSearchContainers =
-                            positionedRmkSearchContainers + 1
-                    end
+                    if searchOk then positioned = positioned + 1 end
                 end
             end
+        end
+    end
+
+    backpackLifecycleLog(string.format(
+        "search positioning completed: reason=%s positioned=%d",
+        tostring(reason), positioned
+    ))
+    return positioned
+end
+
+local function applyBackpackLayout(controller, reason)
+    cancelMainMenuRetries("backpack " .. tostring(reason))
+    ensureMenuPillarsDisabled("backpack " .. tostring(reason))
+    if not BACKPACK_LAYOUT_ENABLED then
+        debugLog(LOG_PREFIX .. " Backpack Safe Mode active; expanded layout skipped")
+        backpackLifecycleLog("expanded layout skipped by safe mode")
+        return
+    end
+    local geometry = getTargetGeometry()
+    if geometry == nil or controller == nil then
+        backpackLifecycleLog(string.format(
+            "application aborted: reason=%s controller=%s geometry=%s",
+            tostring(reason), tostring(controller), tostring(geometry)
+        ))
+        return
+    end
+    if backpackLayoutAppliedControllers[controller] then
+        backpackLifecycleLog(
+            "duplicate application rejected: reason=" .. tostring(reason)
+        )
+        return
+    end
+
+    local searchRoot = getMenuVirtualWindow()
+    if searchRoot == nil then
+        backpackLifecycleLog(
+            "application aborted: inkMenuLayer virtual window unavailable"
+        )
+        return
+    end
+    backpackLayoutAppliedControllers[controller] = true
+    backpackLifecycleLog(string.format(
+        "single application started: reason=%s controller=%s width=%.2f",
+        tostring(reason), tostring(controller), geometry.contentWidth
+    ))
+
+    local widenedRoots = 0
+    local widenedInventoryCanvases = 0
+    local inventoryCanvasWidth = extendLegacy21x9Value(
+        2720.0, 3990.0, geometry
+    )
+    for _, wrapper in ipairs(collectByName(searchRoot, "wrapper", 24)) do
+        local parent = safe(function() return wrapper:GetParentWidget() end)
+        if parent ~= nil and widgetName(parent) == "Root" then
+            local ok = pcall(function()
+                -- Backpack's second Root owns wrapper and the item-grid area.
+                -- Widen only this branch; the other Root keeps the vanilla
+                -- coordinate space used by the rest of the screen.
+                parent:SetSize(geometry.contentWidth, REFERENCE_HEIGHT)
+            end)
+            if ok then widenedRoots = widenedRoots + 1 end
+        end
+
+        for _, canvas in ipairs(
+            collectByName(wrapper, "inkCanvasWidget21", 8)
+        ) do
+            local ok = pcall(function()
+                local size = canvas:GetSize()
+                canvas:SetSize(inventoryCanvasWidth, size.Y)
+                canvas:FlagForVisualInvalidation()
+            end)
+            if ok then
+                widenedInventoryCanvases = widenedInventoryCanvases + 1
+            end
+
         end
     end
 
@@ -1852,14 +1875,14 @@ local function applyBackpackLayout(controller, reason)
     debugLog(string.format(
         "%s backpack %s: widenedRoots=%d inventoryCanvases=%d canvasWidth=%.2f rmkSearch=%d gridColumns=%d gridExtraWidth=%.2f buttonHints=%d dropdowns=%d dropdownLeft=%.2f rightFluff=%d",
         LOG_PREFIX, reason, widenedRoots, widenedInventoryCanvases,
-        inventoryCanvasWidth, positionedRmkSearchContainers,
+        inventoryCanvasWidth, 0,
         expandedGridColumns, additionalGridWidth, buttonHints,
         dropdownContainers, dropdownLeft, rightFluff
     ))
     backpackLifecycleLog(string.format(
         "single application completed: roots=%d canvases=%d gridColumns=%d gridExtraWidth=%.2f rmkSearch=%d dropdowns=%d",
         widenedRoots, widenedInventoryCanvases, expandedGridColumns,
-        additionalGridWidth, positionedRmkSearchContainers,
+        additionalGridWidth, 0,
         dropdownContainers
     ))
 end
@@ -3543,8 +3566,14 @@ registerForEvent("onInit", function()
 
     Observe("BackpackMainGameController", "OnInitialize", function(controller)
         backpackLifecycleLog(
-            "BackpackMainGameController.OnInitialize completed; no layout mutation"
+            "BackpackMainGameController.OnInitialize completed; search positioning queued"
         )
+        table.insert(pendingLayouts, {
+            controller = controller,
+            kind = "backpackSearch",
+            elapsed = 0.0,
+            delay = 0.0
+        })
     end)
 
     local backpackUninitializeRegistered = pcall(function()
@@ -3889,6 +3918,8 @@ registerForEvent("onUpdate", function(deltaTime)
                     applyGalleryLayout(item.controller, "delayed")
                 elseif item.kind == "breachProtocol" then
                     applyBreachProtocolLayout(item.controller, "delayed")
+                elseif item.kind == "backpackSearch" then
+                    positionBackpackSearch(item.controller, "post-initialize")
                 elseif item.kind == "revisedBackpack" then
                     applyRevisedBackpackLayout(item.controller, "delayed")
                 elseif item.kind == "auxiliary" then
