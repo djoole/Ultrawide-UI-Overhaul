@@ -1,11 +1,11 @@
 local MOD_NAME = "Ultrawide UI Overhaul"
-local VERSION = "2.2.1-TEST-BackpackPreInitSearchPostInit"
+local VERSION = "2.2.1"
 local LOG_PREFIX = "[UltrawideUIOverhaul]"
 local DEBUG = false
 
 -- Temporary lifecycle diagnostics for the Backpack CTD hotfix test.
 local BACKPACK_LAYOUT_ENABLED = true
-local BACKPACK_LIFECYCLE_DIAGNOSTICS = true
+local BACKPACK_LIFECYCLE_DIAGNOSTICS = false
 local BACKPACK_LIFECYCLE_DIAGNOSTIC_FILE =
     "backpack_lifecycle_diagnostic.log"
 
