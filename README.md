@@ -1,6 +1,6 @@
 # Ultrawide UI Overhaul
 
-Current release: **2.2.0**
+Current release: **2.2.1**
 
 RED4ext plugin (`BlackPillarsRemover`) that prevents Cyberpunk 2077's fullscreen compositor from
 adding 16:9 side pillars when an ultrawide menu or background is intentionally
@@ -37,6 +37,13 @@ Widget placement is handled separately by the CET script in
 The hook is version-locked to Cyberpunk 2077 2.31. It checks the expected bytes
 at the target RVA and refuses to install on an unknown executable. A game update
 may require a new RVA/signature before the plugin can be used safely.
+
+## Version 2.2.1
+
+- Prevented repeated Backpack layout mutations while its virtualized inventory
+  was being initialized, resolving opening crashes reported by affected users.
+- Applied Backpack grid geometry once before controller initialization, while
+  keeping Search placement in a separate post-initialization pass.
 
 ## Version 2.2.0
 
