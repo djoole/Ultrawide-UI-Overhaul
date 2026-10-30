@@ -209,7 +209,8 @@ RED4ext::Vector2* FitReferenceRectOverride(RED4ext::Vector2* aResult,
     // here makes the virtual pointer appear but prevents stick movement.
     // Keep the stock fitted rectangle for this input path while allowing the
     // fullscreen compositor callers below to use the physical rectangle.
-    constexpr uintptr_t kControllerPointerCallerReturnRva = 0x103BE12;
+    // Cyberpunk 2077 2.5 (3.0.88.46235).
+    constexpr uintptr_t kControllerPointerCallerReturnRva = 0x60B4CB;
     const bool isControllerPointerPath =
         callerRva == kControllerPointerCallerReturnRva;
 
@@ -257,9 +258,9 @@ bool InstallHook()
     if (s_sdk == nullptr || s_sdk->hooking == nullptr)
         return false;
 
-    // Cyberpunk 2077 2.31. Refuse to attach if a game update changes the
+    // Cyberpunk 2077 2.5 (3.0.88.46235). Refuse to attach if a game update changes the
     // function, instead of hooking an unknown address.
-    constexpr uintptr_t kFitReferenceRectRva = 0x2980F4;
+    constexpr uintptr_t kFitReferenceRectRva = 0x3D9254;
     constexpr uint8_t kExpected[] = {
         0xF3, 0x0F, 0x10, 0x42, 0x04, 0xF3, 0x0F, 0x10, 0x0A,
         0x0F, 0x28, 0xD0
@@ -338,8 +339,8 @@ RED4EXT_C_EXPORT void RED4EXT_CALL Query(RED4ext::v1::PluginInfo* aInfo)
 {
     aInfo->name = L"Black Pillars Remover";
     aInfo->author = L"djoole";
-    aInfo->version = RED4EXT_V1_SEMVER(2, 0, 0);
-    aInfo->runtime = RED4EXT_V1_RUNTIME_VERSION_LATEST;
+    aInfo->version = RED4EXT_V1_SEMVER(2, 5, 6);
+    aInfo->runtime = RED4EXT_V1_RUNTIME_VERSION_2_50;
     aInfo->sdk = RED4EXT_V1_SDK_VERSION_CURRENT;
 }
 
