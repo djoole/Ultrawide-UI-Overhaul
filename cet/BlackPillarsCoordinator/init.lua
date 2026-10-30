@@ -1,15 +1,23 @@
--- Ultrawide UI Overhaul v2.2.2
+-- Ultrawide UI Overhaul v2.5.4
 -- Black Pillars Coordinator
 --
--- The native plugin owns the compositor hook. This small, independent CET
--- module only tells it when fullscreen pillars are desirable:
---   * enabled during startup and loading screens;
---   * disabled in the main menu and in the playable world.
+-- Policy:
+--   * Stock pillars are allowed only during the real startup / pre-game phase.
+--   * Once UltrawideUIOverhaul declares the refitted Main Menu ready and asks
+--     for pillars OFF, that becomes the normal process-lifetime latch.
+--   * After that point, no loading path (quickload, fast travel, load game,
+--     initial loading, return to Main Menu, etc.) may re-enable pillars.
+--   * Arcade minigames are the intentional exception: while their authored
+--     aspect-ratio screen is active, a temporary scope may restore the native
+--     pillars without clearing the process-lifetime latch.
 --
--- It intentionally does not touch the main UltrawideUIOverhaul layout script.
+-- The native plugin owns the compositor hook. This CET module only coordinates
+-- the desired state and exposes the shared SetPillarsDisabled API.
 
 local pillarsDisabled = nil
 local loadingActive = false
+local pillarsLockedOff = false
+local temporaryPillarsVisible = false
 local publicApi = {}
 
 
@@ -32,6 +40,20 @@ end
 ---------------------------------------------------------------------------
 
 local function setPillarsDisabled(disabled, force)
+    -- Arcade minigames intentionally keep their authored aspect ratio and use
+    -- the native pillars as an outer mask for oversized scrolling/parallax
+    -- layers. While that temporary scope is active, it takes precedence over
+    -- the normal post-startup "pillars locked off" policy.
+    if temporaryPillarsVisible then
+        disabled = false
+        force = true
+    -- Once the Main Menu / gameplay ultrawide state has been released, pillars
+    -- are otherwise forbidden for the remainder of this process session.
+    elseif pillarsLockedOff and not disabled then
+        disabled = true
+        force = true
+    end
+
     if not force and pillarsDisabled == disabled then
         return
     end
@@ -51,21 +73,54 @@ local function setPillarsDisabled(disabled, force)
 end
 
 
--- Shared entry point used by the independent layout module.
+-- Shared entry point used by UltrawideUIOverhaul.
 --
--- When that module suppresses the pillars again, we are no longer in a
--- loading presentation. This is particularly important when returning to
--- the main menu, where QuestTracker.OnInitialize does not run.
+-- The first request for pillars OFF is the hand-off from startup/pre-game to
+-- the refitted ultrawide UI. From that moment on, pillars stay disabled until
+-- process shutdown.
 UWMenuSetPillarsDisabled = function(disabled)
     if disabled then
+        pillarsLockedOff = true
         loadingActive = false
+        setPillarsDisabled(true, true)
+        return
     end
 
-    setPillarsDisabled(disabled, false)
+    -- Re-enabling is legal only before the first ultrawide hand-off.
+    if pillarsLockedOff then
+        setPillarsDisabled(true, true)
+        return
+    end
+
+    setPillarsDisabled(false, false)
 end
 
 publicApi.SetPillarsDisabled = function(disabled)
     UWMenuSetPillarsDisabled(disabled)
+end
+
+
+-- Temporary authored-aspect-ratio scope used by arcade minigames.
+-- This does not clear pillarsLockedOff; it only overrides the compositor state
+-- for the duration of the arcade screen. Releasing the scope immediately
+-- restores the normal post-startup ultrawide suppression policy.
+UWMenuSetTemporaryPillarsVisible = function(visible)
+    temporaryPillarsVisible = visible == true
+
+    if temporaryPillarsVisible then
+        setPillarsDisabled(false, true)
+        return
+    end
+
+    if pillarsLockedOff then
+        setPillarsDisabled(true, true)
+    else
+        setPillarsDisabled(false, true)
+    end
+end
+
+publicApi.SetTemporaryPillarsVisible = function(visible)
+    UWMenuSetTemporaryPillarsVisible(visible)
 end
 
 
@@ -74,16 +129,21 @@ end
 ---------------------------------------------------------------------------
 
 local function beginLoading()
-    -- LoadingScreenProgressBarController.SetProgress fires very frequently,
-    -- so ignore subsequent calls once the loading transition is active.
     if loadingActive then
         return
     end
 
     loadingActive = true
 
-    -- Force synchronization because the independent layout module may have
-    -- changed the native compositor state while this local cache was stale.
+    if pillarsLockedOff then
+        -- Loading screens are now refitted by UltrawideUIOverhaul, so after
+        -- the Main Menu hand-off they must never restore 16:9 pillars.
+        setPillarsDisabled(true, true)
+        return
+    end
+
+    -- Before the first Main Menu hand-off we are still in stock startup /
+    -- pre-game presentation, where pillars are intentional.
     setPillarsDisabled(false, true)
 end
 
@@ -95,7 +155,7 @@ local function endLoading()
 
     loadingActive = false
 
-    -- The playable world is attached: suppress the stock pillars again.
+    -- Playable world and every post-Main-Menu presentation are ultrawide.
     setPillarsDisabled(true, true)
 end
 
@@ -106,26 +166,11 @@ end
 
 registerForEvent("onInit", function()
 
-    -----------------------------------------------------------------------
-    -- Startup
-    -----------------------------------------------------------------------
+    -- Do not overwrite native compositor state here. The DLL starts with stock
+    -- pillars enabled on a real process launch. On CET Reload All Mods, the
+    -- main UltrawideUIOverhaul module will immediately reassert the correct
+    -- state for the currently attached screen.
 
-    -- Do not overwrite the native compositor state here. The DLL starts with
-    -- stock pillars enabled on a real process launch. During CET's
-    -- "Reload All Mods", however, the DLL remains loaded and already holds
-    -- the correct state for the current screen. Preserving it avoids both an
-    -- early main-menu suppression and pillars reappearing in an attached
-    -- playable session whose QuestTracker.OnInitialize will not be replayed.
-
-
-    -----------------------------------------------------------------------
-    -- Loading-screen fallback
-    -----------------------------------------------------------------------
-
-    -- Confirms that a loading screen is active.
-    --
-    -- This may fire too late to be the primary trigger for Continue or
-    -- Load Game, so those paths are intercepted separately below.
     Observe(
         "LoadingScreenProgressBarController",
         "SetProgress",
@@ -134,42 +179,23 @@ registerForEvent("onInit", function()
         end
     )
 
-
-    -----------------------------------------------------------------------
-    -- MAIN MENU -> CONTINUE
-    -----------------------------------------------------------------------
-
-    -- PauseMenuAction.QuickLoad == 5.
-    --
-    -- This fires before LoadModdedSave / LoadLastCheckpoint, restoring the
-    -- pillars before the loading presentation begins.
-    local continueRegistered, continueError = pcall(function()
-
+    -- Main Menu -> Continue.
+    pcall(function()
         ObserveBefore(
             "gameuiMenuItemListGameController",
             "OnMenuItemActivated",
             function(_, _, target)
-
-                if target == nil then
-                    return
-                end
+                if target == nil then return end
 
                 local data = nil
-
                 local dataOk = pcall(function()
                     data = target:GetData()
                 end)
-
-                if not dataOk or data == nil then
-                    return
-                end
+                if not dataOk or data == nil then return end
 
                 local action = -1
-
                 pcall(function()
-                    action =
-                        tonumber(EnumInt(data.action))
-                        or -1
+                    action = tonumber(EnumInt(data.action)) or -1
                 end)
 
                 if action == 5 then
@@ -179,76 +205,30 @@ registerForEvent("onInit", function()
         )
     end)
 
-
-    if not continueRegistered then
-        logError(
-            "Failed to register Continue hook: "
-            .. tostring(continueError)
-        )
-    end
-
-
-    -----------------------------------------------------------------------
-    -- MAIN MENU -> LOAD GAME -> SELECT SAVE
-    -----------------------------------------------------------------------
-
-    -- Detect the save-slot activation before LoadGame() starts creating the
-    -- loading transition.
-    local loadSlotRegistered, loadSlotError = pcall(function()
-
+    -- Main Menu -> Load Game -> select save.
+    pcall(function()
         ObserveBefore(
             "LoadGameMenuGameController",
             "OnRelease",
             function(_, event)
-
-                if event == nil then
-                    return
-                end
-
-
-                -----------------------------------------------------------
-                -- Select / click activation
-                -----------------------------------------------------------
+                if event == nil then return end
 
                 local isClick = false
-
                 pcall(function()
-                    isClick =
-                        event:IsAction(
-                            CName.new("click")
-                        )
+                    isClick = event:IsAction(CName.new("click"))
                 end)
-
-                if not isClick then
-                    return
-                end
-
-
-                -----------------------------------------------------------
-                -- Valid save slot
-                -----------------------------------------------------------
+                if not isClick then return end
 
                 local validSlot = false
-
                 pcall(function()
+                    local widget = event:GetCurrentTarget()
+                    if widget == nil then return end
 
-                    local widget =
-                        event:GetCurrentTarget()
-
-                    if widget == nil then
-                        return
-                    end
-
-                    local controller =
-                        widget:GetController()
-
-                    if controller ~= nil
-                        and controller:ValidSlot()
-                    then
+                    local controller = widget:GetController()
+                    if controller ~= nil and controller:ValidSlot() then
                         validSlot = true
                     end
                 end)
-
 
                 if validSlot then
                     beginLoading()
@@ -257,21 +237,7 @@ registerForEvent("onInit", function()
         )
     end)
 
-
-    if not loadSlotRegistered then
-        logError(
-            "Failed to register Load Game slot hook: "
-            .. tostring(loadSlotError)
-        )
-    end
-
-
-    -----------------------------------------------------------------------
-    -- LOAD GAME internal fallback
-    -----------------------------------------------------------------------
-
     pcall(function()
-
         ObserveBefore(
             "LoadGameMenuGameController",
             "LoadGame;LoadListItem",
@@ -281,14 +247,7 @@ registerForEvent("onInit", function()
         )
     end)
 
-
-    -----------------------------------------------------------------------
-    -- Native loading fallbacks
-    -----------------------------------------------------------------------
-
-    -- Vanilla latest-save Continue path.
     pcall(function()
-
         ObserveBefore(
             "inkISystemRequestsHandler",
             "LoadLastCheckpoint",
@@ -298,10 +257,7 @@ registerForEvent("onInit", function()
         )
     end)
 
-
-    -- Explicit vanilla save load.
     pcall(function()
-
         ObserveBefore(
             "inkISystemRequestsHandler",
             "LoadSavedGame",
@@ -311,10 +267,7 @@ registerForEvent("onInit", function()
         )
     end)
 
-
-    -- Modded latest-save Continue path.
     pcall(function()
-
         ObserveBefore(
             "gameuiSaveHandlingController",
             "LoadModdedSave",
@@ -324,10 +277,7 @@ registerForEvent("onInit", function()
         )
     end)
 
-
-    -- Loading-screen preparation.
     pcall(function()
-
         ObserveBefore(
             "gameuiSaveHandlingController",
             "PreSpawnInitialLoadingScreen",
@@ -337,10 +287,7 @@ registerForEvent("onInit", function()
         )
     end)
 
-
-    -- General save-loading path.
     pcall(function()
-
         ObserveBefore(
             "gameuiSaveHandlingController",
             "LoadSaveInGame",
@@ -350,13 +297,8 @@ registerForEvent("onInit", function()
         )
     end)
 
-
-    -----------------------------------------------------------------------
-    -- Quick load from gameplay
-    -----------------------------------------------------------------------
-
+    -- Quickload from gameplay.
     pcall(function()
-
         ObserveBefore(
             "gameuiInGameMenuGameController",
             "OnQuickLoadSavesReady",
@@ -366,15 +308,6 @@ registerForEvent("onInit", function()
         )
     end)
 
-
-    -----------------------------------------------------------------------
-    -- PLAYABLE WORLD ATTACHED
-    -----------------------------------------------------------------------
-
-    -- Session-loaded marker also used by psiberX's GameUI.
-    --
-    -- QuestTrackerGameController.OnInitialize means the playable session /
-    -- HUD has attached. The loading presentation is over.
     Observe(
         "QuestTrackerGameController",
         "OnInitialize",
@@ -383,18 +316,10 @@ registerForEvent("onInit", function()
         end
     )
 
-
-    -----------------------------------------------------------------------
-    -- PLAYABLE WORLD -> LOADING
-    -----------------------------------------------------------------------
-
-    -- Fallback for transitions that do not originate from one of the
-    -- explicit save/loading paths above.
     Observe(
         "QuestTrackerGameController",
         "OnUninitialize",
         function()
-
             if Game.GetPlayer() == nil then
                 beginLoading()
             end
@@ -408,15 +333,14 @@ end)
 ---------------------------------------------------------------------------
 
 registerForEvent("onShutdown", function()
-
     loadingActive = false
     pillarsDisabled = nil
+    pillarsLockedOff = false
+    temporaryPillarsVisible = false
 
-    -- Keep the native state intact across CET hot reloads. On a real game
-    -- shutdown the DLL is unloaded immediately afterwards, so no compositor
-    -- state needs to be restored from Lua.
-
+    -- Keep native compositor state intact across CET hot reloads.
     UWMenuSetPillarsDisabled = nil
+    UWMenuSetTemporaryPillarsVisible = nil
 end)
 
 return publicApi
