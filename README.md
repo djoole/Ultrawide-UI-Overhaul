@@ -1,15 +1,18 @@
 # Ultrawide UI Overhaul
 
-Current release: **2.2.2**
+Current release: **2.5.6**
 
-RED4ext plugin (`BlackPillarsRemover`) that prevents Cyberpunk 2077's fullscreen compositor from
-adding 16:9 side pillars when an ultrawide menu or background is intentionally
-laid out across a display from 2:1 through 32:9.
+Ultrawide UI Overhaul redesigns Cyberpunk 2077's menus, loading screens and
+fullscreen backgrounds for displays from 2:1 through 32:9. Content-heavy menus
+gain additional usable space instead of merely stretching their backgrounds,
+and the optional UI Spread setting lets users choose how far the interface
+extends while backgrounds remain full-width.
 
-The plugin does not move widgets and does not alter menu layout by itself.
-Widget placement is handled separately by the CET script in
-`cet/UltrawideUIOverhaul/init.lua`. The native coordinator is in
-`cet/BlackPillarsCoordinator/init.lua`. The native plugin registers
+Widget placement is handled by the CET script in
+`cet/UltrawideUIOverhaul/init.lua`. The CET pillar coordinator is in
+`cet/BlackPillarsCoordinator/init.lua`. The RED4ext plugin prevents the
+fullscreen compositor from adding 16:9 side pillars when an ultrawide menu or
+background is intentionally laid out across the display. It registers
 `UWMapSetBlackBarsSuppressed(Bool)`:
 
 - `false`: keep the game's stock fullscreen fit and side pillars;
@@ -23,20 +26,99 @@ Widget placement is handled separately by the CET script in
 - expanded Backpack, Stash, Crafting, Gallery and Shards layouts that use the added
   horizontal workspace instead of merely extending their backgrounds;
 - ultrawide backgrounds and repositioned edge widgets across the vanilla
-  fullscreen menus, popup views and Breach Protocol;
+  fullscreen menus, loading screens, popup views and Breach Protocol;
+- configurable UI Spread from a centered 16:9 content area to the full
+  ultrawide width, independently from full-width backgrounds;
 - coordinated stock pillars during startup, loading screens, the main menu and
   gameplay;
 - ratio-aware support covering 2:1, 21:9, intermediate ultrawide and 32:9
   modes, including 2880x1440, 1920x816, 2560x1000, 2560x1080, 3440x1440
   and 3200x900 tests;
 - optional UI compatibility for Cleaner Main Menu and Pause Menu, Preem Menu
-  StealthRunner and Revised Backpack.
+  StealthRunner, Revised Backpack and Vehicle Selector Frontend.
+
+## Requirements
+
+- Cyberpunk 2077 2.5;
+- [RED4ext](https://github.com/WopsS/RED4ext);
+- [Cyber Engine Tweaks](https://github.com/maximegmd/CyberEngineTweaks);
+- [Codeware](https://github.com/psiberx/cp2077-codeware);
+- Native Settings UI is optional and exposes UI Spread and debug-log settings.
 
 ## Compatibility
 
-The hook is version-locked to Cyberpunk 2077 2.31. It checks the expected bytes
+The hook is version-locked to Cyberpunk 2077 2.5 (runtime 3.0.88.46235). It checks the expected bytes
 at the target RVA and refuses to install on an unknown executable. A game update
 may require a new RVA/signature before the plugin can be used safely.
+
+## Version 2.5.6
+
+- Updated the native RED4ext plugin for Cyberpunk 2077 2.5 and the current
+  RED4ext SDK/runtime.
+- Relocated the fullscreen-composition hook and the controller-pointer caller
+  exception while retaining the existing ultrawide layouts and behavior.
+
+## Version 2.5.5
+
+- Fixed UI rendering glitches beyond 4096 pixels on the Perks screen by
+  introducing an automatic compatibility mode for wider resolutions.
+
+## Version 2.5.4
+
+- Added proper fullscreen arcade-minigame support by temporarily restoring the
+  native black pillars around their authored aspect-ratio content.
+- Fixed checkpoint reload and quickload screens exposing the streaming game
+  world at the ultrawide edges.
+
+## Version 2.5.3
+
+- Fixed Initial Loading Screen, Fast Travel Loading Screen and World Map refits
+  on systems where controller root widgets did not expose their parent.
+
+## Version 2.5.2
+
+- Fixed debug logging being forced on by default.
+
+## Version 2.5.1
+
+- Made initial loading-screen ultrawide coverage generic across different
+  scenes.
+- Improved optional Mod Settings and Revised Backpack detection.
+- Improved World Map readiness handling so camera adjustments wait for the Ink
+  layout.
+
+## Version 2.5.0
+
+- Added full ultrawide support for loading screens.
+
+## Version 2.4.2
+
+- Added Vehicle Selector Frontend compatibility, including correct ultrawide
+  placement of vehicle preview images in the Mods menu.
+
+## Version 2.4.1
+
+- Added full ultrawide support for the Buy/Sell Vendor screen and Item/Wardrobe
+  Preview.
+- Made the player inventory default to All Items when opening a Vendor.
+
+## Version 2.4.0
+
+- Added UI Spread in the Mods settings, with continuous interpolation between
+  a centered 16:9 content area and the full ultrawide width.
+- Kept fullscreen backgrounds full-width independently from UI Spread.
+- Added an Activate Debug Logs setting.
+- Fixed the Native Settings description panel being placed too far right.
+
+## Version 2.3.0
+
+- Rewrote the layout system around exact widget paths instead of broad
+  recursive scans.
+- Removed heavy retries and repeated layout passes, substantially reducing
+  menu-opening frame-time spikes and stutter.
+- Fixed timing issues involving widgets created or animated after menu
+  initialization.
+- Improved Main Menu handling, startup pillar removal and optional diagnostics.
 
 ## Version 2.2.2
 
