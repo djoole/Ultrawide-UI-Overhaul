@@ -3,8 +3,8 @@
 --
 -- Policy:
 --   * Stock pillars are allowed only during the real startup / pre-game phase.
---   * Once UltrawideUIOverhaul declares the refitted Main Menu ready and asks
---     for pillars OFF, that becomes the normal process-lifetime latch.
+--   * Once UltrawideUIOverhaul declares a refitted Main Menu or save-loading
+--     screen ready and asks for pillars OFF, that becomes the process latch.
 --   * After that point, no loading path (quickload, fast travel, load game,
 --     initial loading, return to Main Menu, etc.) may re-enable pillars.
 --   * Arcade minigames are the intentional exception: while their authored
@@ -142,8 +142,9 @@ local function beginLoading()
         return
     end
 
-    -- Before the first Main Menu hand-off we are still in stock startup /
-    -- pre-game presentation, where pillars are intentional.
+    -- Until a Main Menu or save-loading refit is ready, preserve startup bars.
+    -- The layout module releases them after its exact loading tree succeeds,
+    -- including when an auto-load mod bypasses the Main Menu entirely.
     setPillarsDisabled(false, true)
 end
 
@@ -156,6 +157,7 @@ local function endLoading()
     loadingActive = false
 
     -- Playable world and every post-Main-Menu presentation are ultrawide.
+    pillarsLockedOff = true
     setPillarsDisabled(true, true)
 end
 

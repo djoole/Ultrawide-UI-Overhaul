@@ -131,7 +131,7 @@ local mainMenuSceneRefitted = false
 --   false = normal menu behavior; generic disable requests are allowed
 --
 -- The lock is enabled explicitly on a real pre-game startup and is released
--- only when the dynamic Main Menu scene exists and has been refitted.
+-- when the Main Menu scene or a real save-loading screen has been refitted.
 local startupPillarLockActive = false
 
 local mainMenuPillarReleaseArmed = false
@@ -733,6 +733,20 @@ local function disablePillars(reason)
     return setPillarsDisabled(true, reason)
 end
 
+-- Auto-load mods may skip displaying the Main Menu. A successfully refitted
+-- save-loading screen is another valid hand-off from startup to ultrawide.
+-- Keep the existing readiness watches active if the backend is unavailable.
+local function releaseLoadingPillarsIfReady(reason)
+    if not setPillarsDisabled(true, reason) then
+        return false
+    end
+
+    startupPillarLockActive = false
+    mainMenuPillarReleaseArmed = false
+    mainMenuWatchActive = false
+    return true
+end
+
 -- Arcade minigames are the one post-startup surface that intentionally wants
 -- the stock pillars back. This goes through a dedicated coordinator override
 -- instead of weakening the normal process-lifetime pillar suppression latch.
@@ -1034,9 +1048,8 @@ local function releaseMainMenuPillarsIfReady(reason)
         return false
     end
 
-    -- This is the ONLY place allowed to lift the startup pillar lock.
-    -- Generic menu/hint callbacks cannot remove the bars before the dynamic
-    -- Main Menu scene is present and already in its ultrawide geometry.
+    -- Alongside refitted save-loading screens, the dynamic Main Menu scene
+    -- may lift the startup lock. Generic menu/hint callbacks cannot do so.
     startupPillarLockActive = false
 
     local ok = setPillarsDisabled(
@@ -6989,7 +7002,9 @@ function UWUI_applyDefaultLoadingMaskExact(controller, reason)
         ))
     end
 
-    return maskOk
+    return maskOk and releaseLoadingPillarsIfReady(
+        "default loading mask ready"
+    )
 end
 
 -- The initial-loading controller and LoadingPartsContainer[5] are common to
@@ -7215,7 +7230,9 @@ local function applyInitialLoadingSceneCoverExact(controller, reason)
         ))
     end
 
-    return applied
+    return applied and releaseLoadingPillarsIfReady(
+        "initial loading scene cover ready"
+    )
 end
 
 local function applyLoadingScreenLayoutExact(controller, reason)
@@ -7539,7 +7556,9 @@ local function applyLoadingScreenLayoutExact(controller, reason)
         bordersOk and topFluffOk and bgOk and mainImageOk and
         topCutOk and bottomCutOk and topBlackOk and bottomBlackOk and
         topBlackExtensionOk and bottomBlackExtensionOk and
-        binksOk and fillOk
+        binksOk and fillOk and releaseLoadingPillarsIfReady(
+            "fast travel loading layout ready"
+        )
 end
 
 
@@ -7571,8 +7590,8 @@ registerForEvent("onInit", function()
     --   controller = inkInitialLoadingScreenLogicController
     --
     -- This is NOT the FastTravel loading controller. Pillar policy is owned
-    -- centrally by BlackPillarsCoordinator; this hook only owns the exact
-    -- ultrawide scene-cover geometry and its short readiness window.
+    -- centrally by BlackPillarsCoordinator; after the exact scene-cover refit
+    -- succeeds, release the startup pillars even if Main Menu was skipped.
     pcall(function()
         Observe(
             "inkInitialLoadingScreenLogicController",
