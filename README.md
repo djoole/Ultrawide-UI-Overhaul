@@ -1,6 +1,6 @@
 # Ultrawide UI Overhaul
 
-Current release: **2.5.6**
+Current release: **2.5.7**
 
 Ultrawide UI Overhaul redesigns Cyberpunk 2077's menus, loading screens and
 fullscreen backgrounds for displays from 2:1 through 32:9. Content-heavy menus
@@ -50,6 +50,13 @@ background is intentionally laid out across the display. It registers
 The hook is version-locked to Cyberpunk 2077 2.5 (runtime 3.0.88.46235). It checks the expected bytes
 at the target RVA and refuses to install on an unknown executable. A game update
 may require a new RVA/signature before the plugin can be used safely.
+
+## Version 2.5.7
+
+- Fixed the mouse cursor being confined to the central 16:9 area on Cyberpunk
+  2077 2.5 while preserving gamepad pointer movement.
+- Fixed black side bars remaining on loading screens when Load Begone or
+  another auto-load mod skips the Main Menu and loads a save directly.
 
 ## Version 2.5.6
 

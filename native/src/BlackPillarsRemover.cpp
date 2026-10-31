@@ -204,13 +204,12 @@ RED4ext::Vector2* FitReferenceRectOverride(RED4ext::Vector2* aResult,
     const auto returnAddress = reinterpret_cast<uintptr_t>(_ReturnAddress());
     const auto callerRva = imageBase != 0 ? returnAddress - imageBase : 0;
 
-    // This caller converts analog-controller pointer coordinates into the
-    // stock UI reference space. Returning the physical ultrawide rectangle
-    // here makes the virtual pointer appear but prevents stick movement.
-    // Keep the stock fitted rectangle for this input path while allowing the
-    // fullscreen compositor callers below to use the physical rectangle.
+    // The pointer scale helper divides the fitted width/height by 3840/2160
+    // before computing analog-stick motion. Keep its stock reference space.
+    // Do not exclude the separate cursor-clamping caller at 0x60B4CB: its
+    // bounds must expand with the compositor or the mouse stays inside 16:9.
     // Cyberpunk 2077 2.5 (3.0.88.46235).
-    constexpr uintptr_t kControllerPointerCallerReturnRva = 0x60B4CB;
+    constexpr uintptr_t kControllerPointerCallerReturnRva = 0x609D6E;
     const bool isControllerPointerPath =
         callerRva == kControllerPointerCallerReturnRva;
 
@@ -271,6 +270,19 @@ bool InstallHook()
     if (target == nullptr || std::memcmp(target, kExpected, sizeof(kExpected)) != 0)
     {
         LogInfo("[BlackPillarsRemover] unsupported game executable; hook not installed");
+        return false;
+    }
+
+    // Validate the excluded pointer-scale call site as well as the hook.
+    // E8 + rel32 at 0x609D69 calls FitReferenceRect and returns at 0x609D6E.
+    constexpr uintptr_t kPointerScaleCallRva = 0x609D69;
+    constexpr uint8_t kExpectedPointerScaleCall[] = {
+        0xE8, 0xE6, 0xF4, 0xDC, 0xFF
+    };
+    if (std::memcmp(imageBase + kPointerScaleCallRva,
+                    kExpectedPointerScaleCall, sizeof(kExpectedPointerScaleCall)) != 0)
+    {
+        LogInfo("[BlackPillarsRemover] unsupported pointer scale call site; hook not installed");
         return false;
     }
 
@@ -339,7 +351,7 @@ RED4EXT_C_EXPORT void RED4EXT_CALL Query(RED4ext::v1::PluginInfo* aInfo)
 {
     aInfo->name = L"Black Pillars Remover";
     aInfo->author = L"djoole";
-    aInfo->version = RED4EXT_V1_SEMVER(2, 5, 6);
+    aInfo->version = RED4EXT_V1_SEMVER(2, 5, 7);
     aInfo->runtime = RED4EXT_V1_RUNTIME_VERSION_2_50;
     aInfo->sdk = RED4EXT_V1_SDK_VERSION_CURRENT;
 }
