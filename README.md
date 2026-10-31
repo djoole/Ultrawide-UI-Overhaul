@@ -1,6 +1,6 @@
 # Ultrawide UI Overhaul
 
-Current release: **2.5.7**
+Current release: **2.5.8**
 
 Ultrawide UI Overhaul redesigns Cyberpunk 2077's menus, loading screens and
 fullscreen backgrounds for displays from 2:1 through 32:9. Content-heavy menus
@@ -25,6 +25,8 @@ background is intentionally laid out across the display. It registers
   district outlines and GPS path;
 - expanded Backpack, Stash, Crafting, Gallery and Shards layouts that use the added
   horizontal workspace instead of merely extending their backgrounds;
+- ultrawide Glam Doc cyberware customization with responsive content and header
+  roots;
 - ultrawide backgrounds and repositioned edge widgets across the vanilla
   fullscreen menus, loading screens, popup views and Breach Protocol;
 - configurable UI Spread from a centered 16:9 content area to the full
@@ -50,6 +52,13 @@ background is intentionally laid out across the display. It registers
 The hook is version-locked to Cyberpunk 2077 2.5 (runtime 3.0.88.46235). It checks the expected bytes
 at the target RVA and refuses to install on an unknown executable. A game update
 may require a new RVA/signature before the plugin can be used safely.
+
+## Version 2.5.8
+
+- Added ultrawide support for the Glam Doc cyberware customization screen,
+  with ratio-aware content and header widths that respect UI Spread.
+- Fixed cursor-following Cyberware tooltips appearing too far to the right on
+  ultrawide displays while preserving widget-attached item tooltip placement.
 
 ## Version 2.5.7
 
