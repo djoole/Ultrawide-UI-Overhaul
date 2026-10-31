@@ -71,6 +71,9 @@
 --     Restore normal Hub layout when leaving Perks; position hints separately
 --     for Character and Perks. No change at physical widths <= 4096.
 --
+--   GLAM DOC CYBERWARE CUSTOMIZATION:
+--     Root[0]/Root[0] + Root[0]/Root[1]             -> UI Spread width, preserve height
+--
 --   Strict menu hints:
 --     cyberware_equip  -> button_hints[1] -> shift right by halfExtra
 --     inventory_screen -> button_hints[2] -> shift right by halfExtra
@@ -82,7 +85,7 @@
 --
 -- UI Spread affects the responsive UI layouts (Main Menu UI, Hub, Backpack, Crafting,
 -- Save/Load, Storage/Stash, Vendors, Pause content, Revised Backpack, Shards, Gallery,
--- Settings/Mods, World Map UI/viewport and routed hints).
+-- Settings/Mods, Glam Doc, World Map UI/viewport and routed hints).
 -- Pure fullscreen/background geometry (Main Menu cover, Breach backgrounds,
 -- Character master_BG, notification canvases and StealthRunner vignette) normally
 -- remains at the physical screen width (except hidden Character backgrounds
@@ -197,6 +200,10 @@ local worldMapPendingCameraGameObject = nil
 -- stock black pillars as the outer mask. MenuScenario_ArcadeMinigame is the
 -- engine-level shared lifecycle signal for all fullscreen arcade minigames.
 local arcadePillarsActive = false
+
+-- Glam Doc's two exact menu roots can attach after controller initialization.
+-- Stop the readiness watch on the first successful refit or when it closes.
+UWUI_glamdoc = { pending = false }
 
 -- Hub submenu name captured from MenuScenario_HubMenu.OnOpenMenu.
 -- Consumed by the first content ButtonHints.OnInitialize for that menu.
@@ -4732,6 +4739,51 @@ end
 
 
 -- ---------------------------------------------------------------------------
+-- GLAM DOC CYBERWARE CUSTOMIZATION
+-- Validated against the 2026-10-31 12:03:41 Ink dump. Both menu roots are
+-- siblings under Root[0]; the content root contains Glamdoc's Inventory.
+-- Only widen those roots: preserve all authored child geometry and animation.
+-- ---------------------------------------------------------------------------
+
+function UWUI_glamdoc.apply(reason)
+    local screenGeometry = getTargetGeometry()
+    local geometry = getUISpreadGeometry(screenGeometry)
+    if geometry == nil then return false end
+
+    local window = getMenuVirtualWindow()
+    local outerRoot = directChild(window, 0, "Root")
+    local contentRoot = directChild(outerRoot, 0, "Root")
+    local headerRoot = directChild(outerRoot, 1, "Root")
+    local wrapper = directChild(contentRoot, 4, "wrapper")
+    local inventory = directChild(wrapper, 1, "Inventory")
+
+    -- Guard the shared Root/Root paths with Glamdoc's exact widget signature.
+    if directChild(contentRoot, 0, "Background_generic") == nil or
+       directChild(contentRoot, 1, "paperDoll") == nil or
+       directChild(inventory, 0, "cyberwareContainer") == nil or
+       directChild(headerRoot, 0, "holder") == nil then
+        return false
+    end
+
+    local contentOk = resizeWidgetWidth(contentRoot, geometry.contentWidth)
+    local headerOk = resizeWidgetWidth(headerRoot, geometry.contentWidth)
+    local applied = contentOk and headerOk
+
+    if applied then
+        disablePillars("glamdoc " .. tostring(reason))
+    end
+    if ACTIVATE_DEBUG_LOGS then
+        writeDebugLog(string.format(
+            "GLAM DOC roots width=%.2f uiSpread=%d%% content=%s header=%s (%s)",
+            geometry.contentWidth, UI_SPREAD_PERCENT,
+            tostring(contentOk), tostring(headerOk), tostring(reason)
+        ))
+    end
+    return applied
+end
+
+
+-- ---------------------------------------------------------------------------
 -- SETTINGS MENU
 --
 -- There are TWO proven Settings shells, depending on where Settings is opened:
@@ -7888,6 +7940,17 @@ registerForEvent("onInit", function()
         end
     )
 
+    Observe("GlamDocGameController", "OnInitialize", function()
+        if getTargetGeometry() == nil then return end
+        UWUI_glamdoc.pending = not UWUI_glamdoc.apply(
+            "GlamDocGameController.OnInitialize"
+        )
+    end)
+
+    Observe("GlamDocGameController", "OnUninitialize", function()
+        UWUI_glamdoc.pending = false
+    end)
+
     -- Native Settings: both pre-game and in-game roots are validated. Apply
     -- once at controller initialization; no readiness watcher is retained
     -- because runtime testing found no timing failure after the dual-root fix.
@@ -9038,6 +9101,10 @@ registerForEvent("onInit", function()
         armMainMenuWatch("onInit pre-game geometry preparation")
     end
 
+    -- A CET reload can happen while Glam Doc is already open. This one-shot
+    -- check is guarded by the same exact signature and never arms a watcher.
+    UWUI_glamdoc.apply("onInit current Glam Doc screen")
+
     if ACTIVATE_DEBUG_LOGS then
         writeDebugLog(
             "loaded: Ultrawide UI Overhaul v2.5.7 + UI SPREAD + LOADING SCREEN + DEFAULT LOADING MASK + INITIAL LOADING COVER + MAIN MENU + STARTUP PILLAR LOCK + HUB + strict hints + BACKPACK + optional REVISED BACKPACK + CRAFTING + WORLD MAP + CHARACTER + NOTIFICATION POPUPS + ITEM PREVIEW + WARDROBE PREVIEW + GALLERY + SHARDS + PAUSE MENU + SAVE/LOAD + STORAGE/STASH + BUY/SELL VENDOR + BREACH PROTOCOL + BREACH TUTORIAL + SETTINGS DUAL ROOT + NATIVE SETTINGS + VEHICLE SELECTOR FRONTEND + optional MOD SETTINGS + SYSTEM NOTIFICATIONS + FLATLINED + ARCADE NATIVE PILLARS + optional STEALTHRUNNER exact paths"
@@ -9047,6 +9114,12 @@ end)
 
 registerForEvent("onUpdate", function(deltaTime)
     applySystemNotificationExact()
+
+    if UWUI_glamdoc.pending then
+        if UWUI_glamdoc.apply("Glam Doc roots ready") then
+            UWUI_glamdoc.pending = false
+        end
+    end
 
     if pendingStashDataRefreshController ~= nil then
         pendingStashDataRefreshDelay = math.max(
@@ -9423,6 +9496,7 @@ registerForEvent("onUpdate", function(deltaTime)
 end)
 
 registerForEvent("onShutdown", function()
+    UWUI_glamdoc.pending = false
     mainMenuWatchActive = false
     mainMenuSceneRefitted = false
     startupPillarLockActive = false
