@@ -1,4 +1,4 @@
--- Ultrawide UI Overhaul v2.5.7
+-- Ultrawide UI Overhaul v2.5.8
 --
 -- Active layout mutations:
 --   MAIN MENU:
@@ -71,6 +71,13 @@
 --     Restore normal Hub layout when leaving Perks; position hints separately
 --     for Character and Perks. No change at physical widths <= 4096.
 --
+--   GLAM DOC CYBERWARE CUSTOMIZATION:
+--     Root[0]/Root[0] + Root[0]/Root[1]             -> UI Spread width, preserve height
+--
+--   CYBERWARE CURSOR TOOLTIPS:
+--     Root[0]/Root[0]/tooltipContainer[5]           -> compensate centered parent
+--     only while following the cursor; widget-attached tooltips use zero offset.
+--
 --   Strict menu hints:
 --     cyberware_equip  -> button_hints[1] -> shift right by halfExtra
 --     inventory_screen -> button_hints[2] -> shift right by halfExtra
@@ -82,7 +89,7 @@
 --
 -- UI Spread affects the responsive UI layouts (Main Menu UI, Hub, Backpack, Crafting,
 -- Save/Load, Storage/Stash, Vendors, Pause content, Revised Backpack, Shards, Gallery,
--- Settings/Mods, World Map UI/viewport and routed hints).
+-- Settings/Mods, Glam Doc, World Map UI/viewport and routed hints).
 -- Pure fullscreen/background geometry (Main Menu cover, Breach backgrounds,
 -- Character master_BG, notification canvases and StealthRunner vignette) normally
 -- remains at the physical screen width (except hidden Character backgrounds
@@ -100,7 +107,7 @@
 local ACTIVATE_DEBUG_LOGS = false
 
 local LOG_FILE = "UltrawideUIOverhaul_debug.log"
-local LOG_PREFIX = "[UWUI v2.5.7]"
+local LOG_PREFIX = "[UWUI v2.5.8]"
 
 local REFERENCE_HEIGHT = 2160.0
 local WORLD_MAP_VIEWPORT_HEIGHT = 1080.0
@@ -197,6 +204,11 @@ local worldMapPendingCameraGameObject = nil
 -- stock black pillars as the outer mask. MenuScenario_ArcadeMinigame is the
 -- engine-level shared lifecycle signal for all fullscreen arcade minigames.
 local arcadePillarsActive = false
+
+-- Glam Doc's two exact menu roots can attach after controller initialization.
+-- Stop the readiness watch on the first successful refit or when it closes.
+UWUI_glamdoc = { pending = false }
+UWUI_cyberwareTooltips = { followsCursor = false }
 
 -- Hub submenu name captured from MenuScenario_HubMenu.OnOpenMenu.
 -- Consumed by the first content ButtonHints.OnInitialize for that menu.
@@ -4732,6 +4744,104 @@ end
 
 
 -- ---------------------------------------------------------------------------
+-- CYBERWARE CURSOR TOOLTIPS
+-- The native cursor follower writes screen-relative coordinates into a child
+-- of the centered 16:9 Cyberware root. Compensate that parent's horizontal
+-- inset with a translation; leave the manager's dynamic margins untouched.
+-- ---------------------------------------------------------------------------
+
+function UWUI_cyberwareTooltips.apply(followsCursor, reason, manager)
+    local _, _, contentRoot = getMenuContentRoot()
+    if contentRoot == nil then return false end
+
+    -- The same tooltip manager class is used throughout the game. Restrict
+    -- this treatment to the exact Cyberware menu shown in the 12:39 Ink dump.
+    local container = directChild(contentRoot, 5, "tooltipContainer")
+    if container == nil or
+       directChild(contentRoot, 0, "wrapper") == nil or
+       directChild(contentRoot, 3, "capacity_bar") == nil or
+       directChild(contentRoot, 4, "armor_bar") == nil then
+        return false
+    end
+    if manager ~= nil and safe(function()
+        return manager:GetRootWidget()
+    end) ~= contentRoot then
+        return false
+    end
+
+    local rootSize = safe(function() return contentRoot:GetSize() end)
+    local translation = safe(function() return container:GetTranslation() end)
+    if rootSize == nil or translation == nil then return false end
+
+    local screenGeometry = getTargetGeometry()
+    local offset = 0.0
+    if followsCursor and screenGeometry ~= nil then
+        -- Use the actual Cyberware root width, independently from UI Spread.
+        -- 3440x1440: (5160 - 3840) / 2 = 660 Ink units = 440 screen pixels.
+        offset = (screenGeometry.contentWidth - rootSize.X) * 0.5
+    end
+
+    UWUI_cyberwareTooltips.followsCursor = followsCursor == true
+    local ok = pcall(function()
+        container:SetTranslation(Vector2.new({ X = -offset, Y = translation.Y }))
+        container:FlagForVisualInvalidation()
+    end)
+    if ACTIVATE_DEBUG_LOGS then
+        writeDebugLog(string.format(
+            "CYBERWARE tooltip cursor=%s translationX=%.2f applied=%s (%s)",
+            tostring(followsCursor), -offset, tostring(ok), tostring(reason)
+        ))
+    end
+    return ok
+end
+
+
+-- ---------------------------------------------------------------------------
+-- GLAM DOC CYBERWARE CUSTOMIZATION
+-- Validated against the 2026-10-31 12:03:41 Ink dump. Both menu roots are
+-- siblings under Root[0]; the content root contains Glamdoc's Inventory.
+-- Only widen those roots: preserve all authored child geometry and animation.
+-- ---------------------------------------------------------------------------
+
+function UWUI_glamdoc.apply(reason)
+    local screenGeometry = getTargetGeometry()
+    local geometry = getUISpreadGeometry(screenGeometry)
+    if geometry == nil then return false end
+
+    local window = getMenuVirtualWindow()
+    local outerRoot = directChild(window, 0, "Root")
+    local contentRoot = directChild(outerRoot, 0, "Root")
+    local headerRoot = directChild(outerRoot, 1, "Root")
+    local wrapper = directChild(contentRoot, 4, "wrapper")
+    local inventory = directChild(wrapper, 1, "Inventory")
+
+    -- Guard the shared Root/Root paths with Glamdoc's exact widget signature.
+    if directChild(contentRoot, 0, "Background_generic") == nil or
+       directChild(contentRoot, 1, "paperDoll") == nil or
+       directChild(inventory, 0, "cyberwareContainer") == nil or
+       directChild(headerRoot, 0, "holder") == nil then
+        return false
+    end
+
+    local contentOk = resizeWidgetWidth(contentRoot, geometry.contentWidth)
+    local headerOk = resizeWidgetWidth(headerRoot, geometry.contentWidth)
+    local applied = contentOk and headerOk
+
+    if applied then
+        disablePillars("glamdoc " .. tostring(reason))
+    end
+    if ACTIVATE_DEBUG_LOGS then
+        writeDebugLog(string.format(
+            "GLAM DOC roots width=%.2f uiSpread=%d%% content=%s header=%s (%s)",
+            geometry.contentWidth, UI_SPREAD_PERCENT,
+            tostring(contentOk), tostring(headerOk), tostring(reason)
+        ))
+    end
+    return applied
+end
+
+
+-- ---------------------------------------------------------------------------
 -- SETTINGS MENU
 --
 -- There are TWO proven Settings shells, depending on where Settings is opened:
@@ -7888,6 +7998,51 @@ registerForEvent("onInit", function()
         end
     )
 
+    Observe("GlamDocGameController", "OnInitialize", function()
+        if getTargetGeometry() == nil then return end
+        UWUI_glamdoc.pending = not UWUI_glamdoc.apply(
+            "GlamDocGameController.OnInitialize"
+        )
+    end)
+
+    Observe("GlamDocGameController", "OnUninitialize", function()
+        UWUI_glamdoc.pending = false
+    end)
+
+    -- These are unique script methods, avoiding ambiguous tooltip-manager
+    -- ShowTooltip/ShowTooltipAtWidget overloads. Apply after the native show
+    -- path has reset its positions, and reset before widget-attached paths.
+    ObserveAfter("gameuiTooltipsManager", "AttachToCursor", function(manager)
+        UWUI_cyberwareTooltips.apply(true, "AttachToCursor", manager)
+    end)
+    ObserveAfter("RipperDocGameController", "OnBarHover", function()
+        UWUI_cyberwareTooltips.apply(true, "OnBarHover")
+    end)
+    for _, method in ipairs({
+        "ShowCWTooltip", "ShowCWPerkTooltip", "ShowCategoryTooltip"
+    }) do
+        local observedMethod = method
+        ObserveBefore("RipperDocGameController", observedMethod, function()
+            UWUI_cyberwareTooltips.apply(false, observedMethod)
+        end)
+    end
+    ObserveAfter("RipperDocGameController", "ShowCategoryTooltip", function()
+        -- This method normally attaches to a slot, but can fall back to the
+        -- cursor. AttachToCursor above records which branch was actually used.
+        UWUI_cyberwareTooltips.apply(
+            UWUI_cyberwareTooltips.followsCursor, "ShowCategoryTooltip complete"
+        )
+    end)
+    ObserveAfter("RipperDocGameController", "OnBarUnhover", function()
+        UWUI_cyberwareTooltips.apply(false, "OnBarUnhover")
+    end)
+    ObserveAfter("RipperDocGameController", "OnInitialize", function()
+        UWUI_cyberwareTooltips.apply(false, "RipperDocGameController.OnInitialize")
+    end)
+    Observe("RipperDocGameController", "OnUninitialize", function()
+        UWUI_cyberwareTooltips.followsCursor = false
+    end)
+
     -- Native Settings: both pre-game and in-game roots are validated. Apply
     -- once at controller initialization; no readiness watcher is retained
     -- because runtime testing found no timing failure after the dual-root fix.
@@ -9038,15 +9193,25 @@ registerForEvent("onInit", function()
         armMainMenuWatch("onInit pre-game geometry preparation")
     end
 
+    -- A CET reload can happen while Glam Doc is already open. This one-shot
+    -- check is guarded by the same exact signature and never arms a watcher.
+    UWUI_glamdoc.apply("onInit current Glam Doc screen")
+
     if ACTIVATE_DEBUG_LOGS then
         writeDebugLog(
-            "loaded: Ultrawide UI Overhaul v2.5.7 + UI SPREAD + LOADING SCREEN + DEFAULT LOADING MASK + INITIAL LOADING COVER + MAIN MENU + STARTUP PILLAR LOCK + HUB + strict hints + BACKPACK + optional REVISED BACKPACK + CRAFTING + WORLD MAP + CHARACTER + NOTIFICATION POPUPS + ITEM PREVIEW + WARDROBE PREVIEW + GALLERY + SHARDS + PAUSE MENU + SAVE/LOAD + STORAGE/STASH + BUY/SELL VENDOR + BREACH PROTOCOL + BREACH TUTORIAL + SETTINGS DUAL ROOT + NATIVE SETTINGS + VEHICLE SELECTOR FRONTEND + optional MOD SETTINGS + SYSTEM NOTIFICATIONS + FLATLINED + ARCADE NATIVE PILLARS + optional STEALTHRUNNER exact paths"
+            "loaded: Ultrawide UI Overhaul v2.5.8 + UI SPREAD + LOADING SCREEN + DEFAULT LOADING MASK + INITIAL LOADING COVER + MAIN MENU + STARTUP PILLAR LOCK + HUB + strict hints + BACKPACK + optional REVISED BACKPACK + CRAFTING + WORLD MAP + CHARACTER + NOTIFICATION POPUPS + ITEM PREVIEW + WARDROBE PREVIEW + GALLERY + SHARDS + PAUSE MENU + SAVE/LOAD + STORAGE/STASH + BUY/SELL VENDOR + GLAM DOC + CYBERWARE CURSOR TOOLTIPS + BREACH PROTOCOL + BREACH TUTORIAL + SETTINGS DUAL ROOT + NATIVE SETTINGS + VEHICLE SELECTOR FRONTEND + optional MOD SETTINGS + SYSTEM NOTIFICATIONS + FLATLINED + ARCADE NATIVE PILLARS + optional STEALTHRUNNER exact paths"
         )
     end
 end)
 
 registerForEvent("onUpdate", function(deltaTime)
     applySystemNotificationExact()
+
+    if UWUI_glamdoc.pending then
+        if UWUI_glamdoc.apply("Glam Doc roots ready") then
+            UWUI_glamdoc.pending = false
+        end
+    end
 
     if pendingStashDataRefreshController ~= nil then
         pendingStashDataRefreshDelay = math.max(
@@ -9423,6 +9588,8 @@ registerForEvent("onUpdate", function(deltaTime)
 end)
 
 registerForEvent("onShutdown", function()
+    UWUI_glamdoc.pending = false
+    UWUI_cyberwareTooltips.followsCursor = false
     mainMenuWatchActive = false
     mainMenuSceneRefitted = false
     startupPillarLockActive = false
