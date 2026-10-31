@@ -351,7 +351,7 @@ RED4EXT_C_EXPORT void RED4EXT_CALL Query(RED4ext::v1::PluginInfo* aInfo)
 {
     aInfo->name = L"Black Pillars Remover";
     aInfo->author = L"djoole";
-    aInfo->version = RED4EXT_V1_SEMVER(2, 5, 8);
+    aInfo->version = RED4EXT_V1_SEMVER(2, 5, 9);
     aInfo->runtime = RED4EXT_V1_RUNTIME_VERSION_2_50;
     aInfo->sdk = RED4EXT_V1_SDK_VERSION_CURRENT;
 }
