@@ -2,6 +2,11 @@
 
 Current release: **2.5.9**
 
+Test branch: **2.5.9b1**. Preserves the native fullscreen fitter's register
+state around the ultrawide adjustment to investigate controller cursors that
+stop moving or jump to screen corners. This is a candidate fix awaiting game
+and reporter validation; the official 2.5.9 remains unchanged.
+
 Ultrawide UI Overhaul redesigns Cyberpunk 2077's menus, loading screens and
 fullscreen backgrounds for displays from 2:1 through 32:9. Content-heavy menus
 gain additional usable space instead of merely stretching their backgrounds,

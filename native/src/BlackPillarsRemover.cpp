@@ -4,7 +4,6 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
-#include <intrin.h>
 #include <string>
 #include <windows.h>
 
@@ -13,14 +12,23 @@
 #include <RED4ext/Scripting/Utils.hpp>
 #include <RED4ext/Scripting/Natives/Generated/Vector2.hpp>
 
+// The engine's internal callers retain volatile registers across this leaf
+// function. The assembly boundary calls the stock trampoline first, then
+// preserves its complete volatile output state around our C++ adjustment.
+extern "C"
+{
+using FitReferenceRect_t = RED4ext::Vector2* (*)(RED4ext::Vector2*, const RED4ext::Vector2*);
+FitReferenceRect_t UWUI_OriginalFitReferenceRect = nullptr;
+RED4ext::Vector2* UWUI_FitReferenceRectBoundary(RED4ext::Vector2*, const RED4ext::Vector2*);
+}
+
 namespace
 {
 RED4ext::v1::PluginHandle s_pluginHandle{};
 const RED4ext::v1::Sdk* s_sdk = nullptr;
 
-using FitReferenceRect_t = RED4ext::Vector2* (*)(RED4ext::Vector2*, const RED4ext::Vector2*);
-FitReferenceRect_t s_originalFitReferenceRect = nullptr;
 void* s_fitReferenceRectTarget = nullptr;
+uintptr_t s_imageBase = 0;
 std::atomic_bool s_suppressed{false};
 std::atomic_uintptr_t s_gameWindow{};
 std::atomic_uint64_t s_lastWindowSearchMs{};
@@ -195,14 +203,13 @@ bool HasMatchingAspect(float aInputAspect)
     return false;
 }
 
-RED4ext::Vector2* FitReferenceRectOverride(RED4ext::Vector2* aResult,
-                                           const RED4ext::Vector2* aInput)
-{
-    auto* result = s_originalFitReferenceRect(aResult, aInput);
+} // namespace
 
-    const auto imageBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
-    const auto returnAddress = reinterpret_cast<uintptr_t>(_ReturnAddress());
-    const auto callerRva = imageBase != 0 ? returnAddress - imageBase : 0;
+extern "C" void UWUI_AdjustFitReferenceRect(RED4ext::Vector2* aResult,
+                                           const RED4ext::Vector2* aInput,
+                                           uintptr_t aReturnAddress)
+{
+    const auto callerRva = s_imageBase != 0 ? aReturnAddress - s_imageBase : 0;
 
     // The pointer scale helper divides the fitted width/height by 3840/2160
     // before computing analog-stick motion. Keep its stock reference space.
@@ -216,7 +223,7 @@ RED4ext::Vector2* FitReferenceRectOverride(RED4ext::Vector2* aResult,
     // REDengine normally fits fullscreen menus into a fixed 3840x2160
     // reference rectangle. Preserve the physical rectangle on ultrawide
     // displays so the compositor does not generate side pillars.
-    if (result != nullptr && aInput != nullptr &&
+    if (aResult != nullptr && aInput != nullptr &&
         s_suppressed.load(std::memory_order_relaxed) &&
         !isControllerPointerPath &&
         aInput->X >= 1800.0f && aInput->Y >= 700.0f &&
@@ -230,12 +237,12 @@ RED4ext::Vector2* FitReferenceRectOverride(RED4ext::Vector2* aResult,
          // window or UserSettings.json becomes available during early boot.
          (aInput->X >= 2500.0f && aInput->Y >= 700.0f)))
     {
-        *result = *aInput;
+        *aResult = *aInput;
     }
-
-    return result;
 }
 
+namespace
+{
 void SetBlackBarsSuppressed(RED4ext::IScriptable* aContext,
                             RED4ext::CStackFrame* aFrame,
                             void* aOut, int64_t a4)
@@ -266,6 +273,7 @@ bool InstallHook()
     };
 
     auto* imageBase = reinterpret_cast<uint8_t*>(GetModuleHandleW(nullptr));
+    s_imageBase = reinterpret_cast<uintptr_t>(imageBase);
     auto* target = imageBase != nullptr ? imageBase + kFitReferenceRectRva : nullptr;
     if (target == nullptr || std::memcmp(target, kExpected, sizeof(kExpected)) != 0)
     {
@@ -287,14 +295,15 @@ bool InstallHook()
     }
 
     if (!s_sdk->hooking->Attach(s_pluginHandle, target,
-                                reinterpret_cast<void*>(&FitReferenceRectOverride),
-                                reinterpret_cast<void**>(&s_originalFitReferenceRect)))
+                                reinterpret_cast<void*>(&UWUI_FitReferenceRectBoundary),
+                                reinterpret_cast<void**>(&UWUI_OriginalFitReferenceRect)))
     {
         LogInfo("[BlackPillarsRemover] hook installation failed");
         return false;
     }
 
     s_fitReferenceRectTarget = target;
+    LogInfo("[BlackPillarsRemover] 2.5.9b1: register-preserving fullscreen hook installed");
     LogInfo("[BlackPillarsRemover] ultrawide fullscreen composition enabled");
     return true;
 }
@@ -341,7 +350,7 @@ RED4EXT_C_EXPORT bool RED4EXT_CALL Main(RED4ext::v1::PluginHandle aHandle,
     {
         s_sdk->hooking->Detach(s_pluginHandle, s_fitReferenceRectTarget);
         s_fitReferenceRectTarget = nullptr;
-        s_originalFitReferenceRect = nullptr;
+        UWUI_OriginalFitReferenceRect = nullptr;
     }
 
     return true;
@@ -351,7 +360,7 @@ RED4EXT_C_EXPORT void RED4EXT_CALL Query(RED4ext::v1::PluginInfo* aInfo)
 {
     aInfo->name = L"Black Pillars Remover";
     aInfo->author = L"djoole";
-    aInfo->version = RED4EXT_V1_SEMVER(2, 5, 9);
+    aInfo->version = RED4EXT_V1_SEMVER_EX(2, 5, 9, RED4EXT_V1_SEMVER_PRERELEASE_TYPE_BETA, 1);
     aInfo->runtime = RED4EXT_V1_RUNTIME_VERSION_2_50;
     aInfo->sdk = RED4EXT_V1_SDK_VERSION_CURRENT;
 }

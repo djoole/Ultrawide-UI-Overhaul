@@ -25,6 +25,7 @@ tools/
 # Keep only the publishable native source and build entry point
 native/src/*
 !native/src/UltrawideMenuBackgrounds.cpp
+!native/src/FitReferenceRectBoundary.asm
 native/*.ps1
 !native/build.ps1
 source/

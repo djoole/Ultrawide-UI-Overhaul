@@ -49,17 +49,22 @@ $include = Join-Path $SdkPath 'include'
 $vendor = Join-Path $SdkPath 'vendor\D3D12MemAlloc'
 $source = Join-Path $PSScriptRoot 'src\BlackPillarsRemover.cpp'
 $object = Join-Path $OutputPath 'BlackPillarsRemover.obj'
+$boundarySource = Join-Path $PSScriptRoot 'src\FitReferenceRectBoundary.asm'
+$boundaryObject = Join-Path $OutputPath 'FitReferenceRectBoundary.obj'
 $dll = Join-Path $OutputPath 'BlackPillarsRemover.dll'
 $importLibrary = Join-Path $OutputPath 'BlackPillarsRemover.lib'
 
 $compileCommand = @(
     'call', ('"{0}"' -f $vsDevCmd), '-arch=x64', '-host_arch=x64', '&&',
+    'ml64.exe', '/nologo', '/c', ('/Fo"{0}"' -f $boundaryObject),
+    ('"{0}"' -f $boundarySource), '&&',
     'cl.exe', '/nologo', '/std:c++20', '/EHsc', '/O2', '/MD', '/LD',
     '/W4', '/DWIN32_LEAN_AND_MEAN',
     ('/I"{0}"' -f $include),
     ('/I"{0}"' -f $vendor),
     ('/Fo:"{0}"' -f $object),
     ('"{0}"' -f $source),
+    ('"{0}"' -f $boundaryObject),
     '/link', 'user32.lib',
     ('/OUT:"{0}"' -f $dll),
     ('/IMPLIB:"{0}"' -f $importLibrary)
