@@ -1,4 +1,4 @@
--- Ultrawide UI Overhaul v2.5.9b1 (controller cursor test)
+-- Ultrawide UI Overhaul v2.5.9b1 (controller cursor + centered Glam Doc test)
 --
 -- Active layout mutations:
 --   MAIN MENU:
@@ -72,7 +72,9 @@
 --     for Character and Perks. No change at physical widths <= 4096.
 --
 --   GLAM DOC CYBERWARE CUSTOMIZATION:
---     Root[0]/Root[0] + Root[0]/Root[1]             -> UI Spread width, preserve height
+--     Root[0]/Root[0]                             -> centered 3840-wide content
+--     Root[0]/Root[1]                             -> UI Spread header width
+--     Root[0]/Root[0]/button_hints[6]              -> right margin 100 - UI halfExtra
 --
 --   CYBERWARE CURSOR TOOLTIPS:
 --     Root[0]/Root[0]/tooltipContainer[5]           -> compensate centered parent
@@ -4799,9 +4801,11 @@ end
 
 -- ---------------------------------------------------------------------------
 -- GLAM DOC CYBERWARE CUSTOMIZATION
--- Validated against the 2026-10-31 12:03:41 Ink dump. Both menu roots are
--- siblings under Root[0]; the content root contains Glamdoc's Inventory.
--- Only widen those roots: preserve all authored child geometry and animation.
+-- Validated against the 2026-11-16 09:06:07 Ink dump. Keep the color wheel
+-- and controls in the centered authored 3840-wide content root; widen only
+-- its sibling header root. BottomRight button_hints[6] has authored right
+-- margin 100, so compensate that margin for the narrower parent. Derive an
+-- absolute target to avoid drift on repeated applies, UI Spread changes or reload.
 -- ---------------------------------------------------------------------------
 
 function UWUI_glamdoc.apply(reason)
@@ -4813,6 +4817,7 @@ function UWUI_glamdoc.apply(reason)
     local outerRoot = directChild(window, 0, "Root")
     local contentRoot = directChild(outerRoot, 0, "Root")
     local headerRoot = directChild(outerRoot, 1, "Root")
+    local buttonHints = directChild(contentRoot, 6, "button_hints")
     local wrapper = directChild(contentRoot, 4, "wrapper")
     local inventory = directChild(wrapper, 1, "Inventory")
 
@@ -4820,22 +4825,32 @@ function UWUI_glamdoc.apply(reason)
     if directChild(contentRoot, 0, "Background_generic") == nil or
        directChild(contentRoot, 1, "paperDoll") == nil or
        directChild(inventory, 0, "cyberwareContainer") == nil or
-       directChild(headerRoot, 0, "holder") == nil then
+       directChild(headerRoot, 0, "holder") == nil or
+       buttonHints == nil then
         return false
     end
 
-    local contentOk = resizeWidgetWidth(contentRoot, geometry.contentWidth)
+    local hintsMargin = safe(function() return buttonHints:GetMargin() end)
+    if hintsMargin == nil then return false end
+
+    local contentOk = resizeWidgetWidth(contentRoot, VANILLA_CONTENT_WIDTH)
     local headerOk = resizeWidgetWidth(headerRoot, geometry.contentWidth)
-    local applied = contentOk and headerOk
+    local hintsRight = 100.0 - geometry.halfExtra
+    local hintsOk = pcall(function()
+        buttonHints:SetMargin(
+            hintsMargin.left, hintsMargin.top, hintsRight, hintsMargin.bottom
+        )
+    end)
+    local applied = contentOk and headerOk and hintsOk
 
     if applied then
         disablePillars("glamdoc " .. tostring(reason))
     end
     if ACTIVATE_DEBUG_LOGS then
         writeDebugLog(string.format(
-            "GLAM DOC roots width=%.2f uiSpread=%d%% content=%s header=%s (%s)",
-            geometry.contentWidth, UI_SPREAD_PERCENT,
-            tostring(contentOk), tostring(headerOk), tostring(reason)
+            "GLAM DOC centered content=%.2f header=%.2f hintsRight=%.2f uiSpread=%d%% content=%s header=%s hints=%s (%s)",
+            VANILLA_CONTENT_WIDTH, geometry.contentWidth, hintsRight, UI_SPREAD_PERCENT,
+            tostring(contentOk), tostring(headerOk), tostring(hintsOk), tostring(reason)
         ))
     end
     return applied
