@@ -5,8 +5,9 @@ Current release: **2.5.9**
 Development branch based on **2.5.9b1**, whose controller cursor correction
 has been confirmed by the reporter. Glam Doc now keeps its color wheel and
 controls and header in a centered 16:9 area, with full-width background decor
-and button hints placed at the right UI boundary. The Glam Doc adjustment is
-awaiting final in-game testing.
+and button hints placed at the right UI boundary. The Glam Doc adjustment has
+been validated in game. The branch also fixes Crafting's clipped final recipe
+column at UI Spread 0%; that correction is awaiting in-game testing.
 
 Ultrawide UI Overhaul redesigns Cyberpunk 2077's menus, loading screens and
 fullscreen backgrounds for displays from 2:1 through 32:9. Content-heavy menus

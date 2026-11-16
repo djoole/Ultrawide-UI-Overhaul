@@ -2045,7 +2045,9 @@ local function applyCraftingLayoutDirect(controller, reason)
     -- 0% returns to the authored 1350-wide vanilla recipe viewport while
     -- 100% remains exactly identical to v2.3.0.
     local gridWidth = 1350.0 + extraWidth + 220.0 * geometry.uiSpread
-    local listHolderWidth = gridWidth - 200.0
+    -- The full-spread holder inset must fade with UI Spread too. A fixed
+    -- 200-unit subtraction clips the last vanilla column at 0% (1150 vs 1350).
+    local listHolderWidth = gridWidth - 200.0 * geometry.uiSpread
     local detailsLeft = 1435.0 + extraWidth
 
     local rootOk = setWidgetSizeExact(
