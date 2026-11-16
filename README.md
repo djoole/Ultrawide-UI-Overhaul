@@ -4,8 +4,9 @@ Current release: **2.5.9**
 
 Development branch based on **2.5.9b1**, whose controller cursor correction
 has been confirmed by the reporter. Glam Doc now keeps its color wheel and
-controls in a centered 16:9 area, with an ultrawide header and button hints
-placed at the right UI boundary. The Glam Doc change is awaiting in-game testing.
+controls and header in a centered 16:9 area, with full-width background decor
+and button hints placed at the right UI boundary. The Glam Doc adjustment is
+awaiting final in-game testing.
 
 Ultrawide UI Overhaul redesigns Cyberpunk 2077's menus, loading screens and
 fullscreen backgrounds for displays from 2:1 through 32:9. Content-heavy menus
@@ -30,8 +31,8 @@ background is intentionally laid out across the display. It registers
   district outlines and GPS path;
 - expanded Backpack, Stash, Crafting, Gallery and Shards layouts that use the added
   horizontal workspace instead of merely extending their backgrounds;
-- centered Glam Doc cyberware customization with an ultrawide header and
-  repositioned button hints;
+- centered Glam Doc cyberware customization with ultrawide background decor
+  and repositioned button hints;
 - ultrawide backgrounds and repositioned edge widgets across the vanilla
   fullscreen menus, loading screens, popup views and Breach Protocol;
 - configurable UI Spread from a centered 16:9 content area to the full

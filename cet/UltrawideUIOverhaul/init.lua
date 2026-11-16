@@ -72,8 +72,9 @@
 --     for Character and Perks. No change at physical widths <= 4096.
 --
 --   GLAM DOC CYBERWARE CUSTOMIZATION:
---     Root[0]/Root[0]                             -> centered 3840-wide content
---     Root[0]/Root[1]                             -> UI Spread header width
+--     Root[0]/Root[0] + Root[0]/Root[1]            -> centered 3840-wide roots
+--     Background_generic[0] + Background_Fluff_GRP[9] -> full-screen horizontal scale
+--     background_paperdoll_mask[2]                -> 120% cover scale, +10% screen width X
 --     Root[0]/Root[0]/button_hints[6]              -> right margin 100 - UI halfExtra
 --
 --   CYBERWARE CURSOR TOOLTIPS:
@@ -4802,10 +4803,11 @@ end
 -- ---------------------------------------------------------------------------
 -- GLAM DOC CYBERWARE CUSTOMIZATION
 -- Validated against the 2026-11-16 09:06:07 Ink dump. Keep the color wheel
--- and controls in the centered authored 3840-wide content root; widen only
--- its sibling header root. BottomRight button_hints[6] has authored right
--- margin 100, so compensate that margin for the narrower parent. Derive an
--- absolute target to avoid drift on repeated applies, UI Spread changes or reload.
+-- and controls in the centered authored 3840-wide content root. Its sibling
+-- root only carries the money display and also stays at its authored width.
+-- Stretch only the three exact decorative children across the physical screen.
+-- BottomRight button_hints[6] has authored right margin 100; shift it to the
+-- UI Spread edge. All targets are absolute to avoid drift across reloads.
 -- ---------------------------------------------------------------------------
 
 function UWUI_glamdoc.apply(reason)
@@ -4818,11 +4820,14 @@ function UWUI_glamdoc.apply(reason)
     local contentRoot = directChild(outerRoot, 0, "Root")
     local headerRoot = directChild(outerRoot, 1, "Root")
     local buttonHints = directChild(contentRoot, 6, "button_hints")
+    local background = directChild(contentRoot, 0, "Background_generic")
+    local mask = directChild(contentRoot, 2, "background_paperdoll_mask")
+    local fluff = directChild(contentRoot, 9, "Background_Fluff_GRP")
     local wrapper = directChild(contentRoot, 4, "wrapper")
     local inventory = directChild(wrapper, 1, "Inventory")
 
     -- Guard the shared Root/Root paths with Glamdoc's exact widget signature.
-    if directChild(contentRoot, 0, "Background_generic") == nil or
+    if background == nil or mask == nil or fluff == nil or
        directChild(contentRoot, 1, "paperDoll") == nil or
        directChild(inventory, 0, "cyberwareContainer") == nil or
        directChild(headerRoot, 0, "holder") == nil or
@@ -4831,26 +4836,44 @@ function UWUI_glamdoc.apply(reason)
     end
 
     local hintsMargin = safe(function() return buttonHints:GetMargin() end)
-    if hintsMargin == nil then return false end
+    local backgroundScale = safe(function() return background:GetScale() end)
+    local fluffScale = safe(function() return fluff:GetScale() end)
+    local maskScale = safe(function() return mask:GetScale() end)
+    local maskTranslation = safe(function() return mask:GetTranslation() end)
+    if hintsMargin == nil or backgroundScale == nil or fluffScale == nil or
+       maskScale == nil or maskTranslation == nil then
+        return false
+    end
 
     local contentOk = resizeWidgetWidth(contentRoot, VANILLA_CONTENT_WIDTH)
-    local headerOk = resizeWidgetWidth(headerRoot, geometry.contentWidth)
+    local headerOk = resizeWidgetWidth(headerRoot, VANILLA_CONTENT_WIDTH)
+    -- Background coverage follows the physical screen, independently of UI Spread.
+    local coverScaleX = screenGeometry.contentWidth / VANILLA_CONTENT_WIDTH
+    local maskScaleX = coverScaleX * 1.20
+    local maskTranslationX = screenGeometry.contentWidth * 0.10
+    local decorOk = pcall(function()
+        background:SetScale(Vector2.new({ X = coverScaleX, Y = backgroundScale.Y }))
+        fluff:SetScale(Vector2.new({ X = coverScaleX, Y = fluffScale.Y }))
+        mask:SetScale(Vector2.new({ X = maskScaleX, Y = maskScale.Y }))
+        mask:SetTranslation(Vector2.new({ X = maskTranslationX, Y = maskTranslation.Y }))
+    end)
     local hintsRight = 100.0 - geometry.halfExtra
     local hintsOk = pcall(function()
         buttonHints:SetMargin(
             hintsMargin.left, hintsMargin.top, hintsRight, hintsMargin.bottom
         )
     end)
-    local applied = contentOk and headerOk and hintsOk
+    local applied = contentOk and headerOk and decorOk and hintsOk
 
     if applied then
         disablePillars("glamdoc " .. tostring(reason))
     end
     if ACTIVATE_DEBUG_LOGS then
         writeDebugLog(string.format(
-            "GLAM DOC centered content=%.2f header=%.2f hintsRight=%.2f uiSpread=%d%% content=%s header=%s hints=%s (%s)",
-            VANILLA_CONTENT_WIDTH, geometry.contentWidth, hintsRight, UI_SPREAD_PERCENT,
-            tostring(contentOk), tostring(headerOk), tostring(hintsOk), tostring(reason)
+            "GLAM DOC centered roots=%.2f coverScaleX=%.5f maskScaleX=%.5f maskX=%.2f hintsRight=%.2f uiSpread=%d%% content=%s header=%s decor=%s hints=%s (%s)",
+            VANILLA_CONTENT_WIDTH, coverScaleX, maskScaleX, maskTranslationX,
+            hintsRight, UI_SPREAD_PERCENT, tostring(contentOk), tostring(headerOk),
+            tostring(decorOk), tostring(hintsOk), tostring(reason)
         ))
     end
     return applied
