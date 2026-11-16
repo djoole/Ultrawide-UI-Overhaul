@@ -1,4 +1,4 @@
--- Ultrawide UI Overhaul v2.5.9b1 (controller cursor test)
+-- Ultrawide UI Overhaul v2.5.10
 -- Black Pillars Coordinator
 --
 -- Policy:

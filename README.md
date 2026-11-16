@@ -1,13 +1,6 @@
 # Ultrawide UI Overhaul
 
-Current release: **2.5.9**
-
-Development branch based on **2.5.9b1**, whose controller cursor correction
-has been confirmed by the reporter. Glam Doc now keeps its color wheel and
-controls and header in a centered 16:9 area, with full-width background decor
-and button hints placed at the right UI boundary. The Glam Doc adjustment has
-been validated in game. The branch also fixes Crafting's clipped final recipe
-column at UI Spread 0%; that correction is awaiting in-game testing.
+Current release: **2.5.10**
 
 Ultrawide UI Overhaul redesigns Cyberpunk 2077's menus, loading screens and
 fullscreen backgrounds for displays from 2:1 through 32:9. Content-heavy menus
@@ -59,6 +52,16 @@ background is intentionally laid out across the display. It registers
 The hook is version-locked to Cyberpunk 2077 2.5 (runtime 3.0.88.46235). It checks the expected bytes
 at the target RVA and refuses to install on an unknown executable. A game update
 may require a new RVA/signature before the plugin can be used safely.
+
+## Version 2.5.10
+
+- Fixed the controller cursor failing to move or jumping to screen corners on
+  affected setups, including Steam Controller through Steam Input.
+- Reworked Glam Doc to keep customization controls and the header centered,
+  while backgrounds and edge decorations cover the ultrawide screen and button
+  hints remain at the right UI boundary.
+- Fixed the final Crafting recipe column being clipped at UI Spread 0%, with
+  corrected viewport-width interpolation at intermediate settings.
 
 ## Version 2.5.9
 

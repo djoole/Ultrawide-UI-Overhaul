@@ -59,7 +59,7 @@ $compileCommand = @(
     'ml64.exe', '/nologo', '/c', ('/Fo"{0}"' -f $boundaryObject),
     ('"{0}"' -f $boundarySource), '&&',
     'cl.exe', '/nologo', '/std:c++20', '/EHsc', '/O2', '/MD', '/LD',
-    '/W4', '/DWIN32_LEAN_AND_MEAN',
+    '/W4', '/DWIN32_LEAN_AND_MEAN', '/DNDEBUG',
     ('/I"{0}"' -f $include),
     ('/I"{0}"' -f $vendor),
     ('/Fo:"{0}"' -f $object),

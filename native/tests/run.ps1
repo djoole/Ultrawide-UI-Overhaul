@@ -17,6 +17,6 @@ Invoke-NativeTestCommand ('cl /nologo /std:c++20 /O2 /EHsc /W4 /Fo"{0}\contract.
 & (Join-Path $build 'contract.exe')
 if ($LASTEXITCODE -ne 0) { throw 'Register-preservation contract failed' }
 Invoke-NativeTestCommand ('ml64 /nologo /c /Fo"{0}" "{1}"' -f $probe, (Join-Path $PSScriptRoot 'BoundaryProbe.asm'))
-Invoke-NativeTestCommand ('cl /nologo /std:c++20 /O2 /EHsc /W4 /DWIN32_LEAN_AND_MEAN /I"{0}\deps\RED4ext.SDK\include" /I"{0}\deps\RED4ext.SDK\vendor\D3D12MemAlloc" /Fo"{1}\geometry.obj" /Fe"{1}\geometry.exe" "{2}" "{3}" "{4}" /link user32.lib' -f $nativeRoot, $build, (Join-Path $PSScriptRoot 'GeometryHarness.cpp'), $boundary, $probe)
+Invoke-NativeTestCommand ('cl /nologo /std:c++20 /O2 /EHsc /W4 /DNDEBUG /DWIN32_LEAN_AND_MEAN /I"{0}\deps\RED4ext.SDK\include" /I"{0}\deps\RED4ext.SDK\vendor\D3D12MemAlloc" /Fo"{1}\geometry.obj" /Fe"{1}\geometry.exe" "{2}" "{3}" "{4}" /link user32.lib' -f $nativeRoot, $build, (Join-Path $PSScriptRoot 'GeometryHarness.cpp'), $boundary, $probe)
 & (Join-Path $build 'geometry.exe')
 if ($LASTEXITCODE -ne 0) { throw 'Production geometry tests failed' }
