@@ -15,12 +15,20 @@ DEVELOPMENT_GUIDE.md
 # Local dependencies, captures and analysis data
 native/deps/
 native/logs/
-diagnostics/
+diagnostics/*
+!diagnostics/*.py
+!diagnostics/*.lua
+!diagnostics/controller-cursor-2.5.9-analysis.md
 backups/
 analysis/
 build/
 dist/
-tools/
+tools/*
+!tools/disasm_pe_range.py
+!tools/find_pe_string_xrefs.py
+maintenance/*.zip
+maintenance/cleanup-verification.json
+maintenance/recovery/
 
 # Keep only the publishable native source and build entry point
 native/src/*
