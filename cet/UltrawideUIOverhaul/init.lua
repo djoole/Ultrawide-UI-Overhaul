@@ -340,6 +340,7 @@ local pendingShardsLayoutChecks = 0
 local pendingRevisedBackpackController = nil
 local pendingRevisedBackpackReason = nil
 local pendingRevisedBackpackChecks = 0
+UWUI_revisedBackpack = { lastPendingReason = nil }
 
 -- Optional StealthRunner compatibility.
 -- Current StealthRunner does not fire the historical popup callbacks when its
@@ -5397,7 +5398,7 @@ end
 -- ---------------------------------------------------------------------------
 -- REVISED BACKPACK (optional mod compatibility)
 --
--- Current dump, controller root = Root/Root:
+-- Previously observed runtime order, controller root = Root/Root:
 --   previewItem[0]
 --   categories[1]
 --   header[2]
@@ -5407,6 +5408,10 @@ end
 --   previewGarment[6]
 --   filters[7]
 --   selectedItemsCount[8]
+-- The official 0.9.17 resource has a different direct-child order, including
+-- tooltipContainer and previewItem[6]. Resolve unique direct-child names in
+-- this known controller root; native preview/tooltip initialization can change
+-- sibling positions. Never search other roots or recurse through the screen.
 --
 -- Item row controller root:
 --   shadow[0]
@@ -5421,62 +5426,91 @@ end
 -- on the overall Revised Backpack composition for ratios wider than 21:9.
 -- ---------------------------------------------------------------------------
 
+function UWUI_revisedBackpack.waitFor(detail, reason)
+    if not ACTIVATE_DEBUG_LOGS or
+       UWUI_revisedBackpack.lastPendingReason == detail then return end
+    UWUI_revisedBackpack.lastPendingReason = detail
+    writeDebugLog(string.format(
+        "REVISED BACKPACK pending: %s checks=%d (%s)",
+        detail, pendingRevisedBackpackChecks, tostring(reason)
+    ))
+end
+
 local function resolveRevisedBackpackMainTree(controller)
-    if controller == nil then return nil end
+    if controller == nil then return nil, "controller unavailable" end
 
     local root = safe(function()
         return controller:GetRootWidget()
     end)
-    if root == nil then return nil end
+    if root == nil then return nil, "controller root unavailable" end
 
-    -- Signature guards from the current Revised Backpack tree.
-    local previewItem = directChild(root, 0, "previewItem")
-    local categories = directChild(root, 1, "categories")
-    local header = directChild(root, 2, "header")
-    local scrollWrapper = directChild(root, 3, "scrollWrapper")
-    local itemListRoot = directChild(root, 5, "itemListRoot")
-    local previewGarment = directChild(root, 6, "previewGarment")
-    local selectedItemsCount = directChild(
-        root, 8, "selectedItemsCount"
-    )
+    local count = safe(function() return root:GetNumChildren() end)
+    if type(count) ~= "number" or count < 0 or count > 64 then
+        return nil, "controller root child count unavailable or unexpected"
+    end
+    local children = {}
+    local summary = {}
+    for index = 0, count - 1 do
+        local child = directChild(root, index)
+        local name = widgetName(child)
+        summary[#summary + 1] = tostring(index) .. ":" .. name
+        -- A duplicate required name is ambiguous and must never be guessed.
+        if children[name] ~= nil then children[name] = false
+        else children[name] = child end
+    end
+    local rootSummary = table.concat(summary, ",")
+    for _, name in ipairs({
+        "previewItem", "categories", "header", "scrollWrapper",
+        "itemListRoot", "previewGarment", "selectedItemsCount"
+    }) do
+        if not children[name] then
+            return nil, (children[name] == false and "ambiguous Root/" or "missing Root/") ..
+                name .. " children=[" .. rootSummary .. "]"
+        end
+    end
+    local previewItem = children.previewItem
+    local header = children.header
+    local scrollWrapper = children.scrollWrapper
+    local itemListRoot = children.itemListRoot
+    local previewGarment = children.previewGarment
+    local selectedItemsCount = children.selectedItemsCount
 
-    if previewItem == nil or categories == nil or header == nil or
-       scrollWrapper == nil or itemListRoot == nil or previewGarment == nil or
-       selectedItemsCount == nil then
-        return nil
+    local missingPath = nil
+    local function requiredChild(parent, index, name, path)
+        local child = directChild(parent, index, name)
+        if child == nil and missingPath == nil then missingPath = path end
+        return child
     end
 
-    local headerName = directChild(header, 0, "nameContainer")
-    local headerType = directChild(header, 2, "typeContainer")
-    local scrollArea = directChild(scrollWrapper, 1, "scrollArea")
+    local headerName = requiredChild(header, 0, "nameContainer", "header/nameContainer[0]")
+    local headerType = requiredChild(header, 2, "typeContainer", "header/typeContainer[2]")
+    local scrollArea = requiredChild(scrollWrapper, 1, "scrollArea", "scrollWrapper/scrollArea[1]")
 
-    local previewItemRoot = directChild(previewItem, 0, "Root")
-    local previewItemWrapper = directChild(
-        previewItemRoot, 0, "wrapper"
+    local previewItemRoot = requiredChild(previewItem, 0, "Root", "previewItem/Root[0]")
+    local previewItemWrapper = requiredChild(
+        previewItemRoot, 0, "wrapper", "previewItem/Root/wrapper[0]"
     )
-    local previewItemImage = directChild(
-        previewItemWrapper, 0, "preview"
-    )
-
-    local previewGarmentRoot = directChild(
-        previewGarment, 0, "Root"
-    )
-    local previewGarmentWrapper = directChild(
-        previewGarmentRoot, 0, "wrapper"
-    )
-    local previewGarmentImage = directChild(
-        previewGarmentWrapper, 0, "preview"
+    local previewItemImage = requiredChild(
+        previewItemWrapper, 0, "preview", "previewItem/Root/wrapper/preview[0]"
     )
 
-    if headerName == nil or headerType == nil or scrollArea == nil or
-       previewItemRoot == nil or previewItemWrapper == nil or
-       previewItemImage == nil or previewGarmentRoot == nil or
-       previewGarmentWrapper == nil or previewGarmentImage == nil then
-        return nil
+    local previewGarmentRoot = requiredChild(
+        previewGarment, 0, "Root", "previewGarment/Root[0]"
+    )
+    local previewGarmentWrapper = requiredChild(
+        previewGarmentRoot, 0, "wrapper", "previewGarment/Root/wrapper[0]"
+    )
+    local previewGarmentImage = requiredChild(
+        previewGarmentWrapper, 0, "preview", "previewGarment/Root/wrapper/preview[0]"
+    )
+
+    if missingPath ~= nil then
+        return nil, "waiting for " .. missingPath .. " children=[" .. rootSummary .. "]"
     end
 
     return {
         root = root,
+        rootChildrenSummary = rootSummary,
         headerName = headerName,
         headerType = headerType,
         scrollWrapper = scrollWrapper,
@@ -5500,10 +5534,16 @@ local function tryApplyRevisedBackpackMainLayout(
 )
     local screenGeometry = getTargetGeometry()
     local geometry = getUISpreadGeometry(screenGeometry)
-    if geometry == nil or controller == nil then return false end
+    if geometry == nil or controller == nil then
+        UWUI_revisedBackpack.waitFor("geometry/controller unavailable", reason)
+        return false
+    end
 
-    local tree = resolveRevisedBackpackMainTree(controller)
-    if tree == nil then return false end
+    local tree, pendingReason = resolveRevisedBackpackMainTree(controller)
+    if tree == nil then
+        UWUI_revisedBackpack.waitFor(pendingReason, reason)
+        return false
+    end
 
     local layoutWidth = math.min(
         geometry.contentWidth,
@@ -5588,6 +5628,11 @@ local function tryApplyRevisedBackpackMainLayout(
 
     if headerNameSize == nil or headerTypeSize == nil or
        scrollAreaSize == nil or itemListRootSize == nil then
+        UWUI_revisedBackpack.waitFor(string.format(
+            "widget sizes unavailable: header/name=%s header/type=%s scrollArea=%s itemListRoot=%s",
+            tostring(headerNameSize ~= nil), tostring(headerTypeSize ~= nil),
+            tostring(scrollAreaSize ~= nil), tostring(itemListRootSize ~= nil)
+        ), reason)
         return false
     end
 
@@ -5713,6 +5758,7 @@ local function tryApplyRevisedBackpackMainLayout(
     end)
 
     if ok then
+        UWUI_revisedBackpack.lastPendingReason = nil
         disablePillars(
             "RevisedBackpack." .. tostring(reason)
         )
@@ -5721,7 +5767,7 @@ local function tryApplyRevisedBackpackMainLayout(
     if ACTIVATE_DEBUG_LOGS then
         if ok then
             writeDebugLog(string.format(
-                "REVISED BACKPACK main ready (%s) checks=%d layoutWidth=%.2f headerName=%.2f type=%.2f scrollArea=%.2f clipComp=%.2f garment=%.2f item=%.2fx%.2f itemRight=%.2f selectedRight=%.2f",
+                "REVISED BACKPACK main ready (%s) checks=%d layoutWidth=%.2f headerName=%.2f type=%.2f scrollArea=%.2f clipComp=%.2f garment=%.2f item=%.2fx%.2f itemRight=%.2f selectedRight=%.2f rootChildren=[%s]",
                 tostring(reason),
                 pendingRevisedBackpackChecks,
                 layoutWidth,
@@ -5733,7 +5779,8 @@ local function tryApplyRevisedBackpackMainLayout(
                 itemPreviewWidth,
                 itemPreviewHeight,
                 itemPreviewRight,
-                selectedItemsRight
+                selectedItemsRight,
+                tree.rootChildrenSummary
             ))
         else
             writeDebugLog(
@@ -8670,6 +8717,7 @@ registerForEvent("onInit", function()
                 pendingRevisedBackpackReason =
                     "RevisedBackpackController.OnInitialize"
                 pendingRevisedBackpackChecks = 0
+                UWUI_revisedBackpack.lastPendingReason = nil
 
                 if ACTIVATE_DEBUG_LOGS then
                     writeDebugLog(
@@ -8684,6 +8732,7 @@ registerForEvent("onInit", function()
                     pendingRevisedBackpackController = nil
                     pendingRevisedBackpackReason = nil
                     pendingRevisedBackpackChecks = 0
+                    UWUI_revisedBackpack.lastPendingReason = nil
                 end
             end
         )
@@ -8696,6 +8745,7 @@ registerForEvent("onInit", function()
                     pendingRevisedBackpackController = nil
                     pendingRevisedBackpackReason = nil
                     pendingRevisedBackpackChecks = 0
+                    UWUI_revisedBackpack.lastPendingReason = nil
                 end
             end
         )
@@ -9694,6 +9744,7 @@ registerForEvent("onShutdown", function()
     pendingRevisedBackpackController = nil
     pendingRevisedBackpackReason = nil
     pendingRevisedBackpackChecks = 0
+    UWUI_revisedBackpack.lastPendingReason = nil
     stealthRunnerHubActive = false
     stealthRunnerPollFrames = 0
     stealthRunnerAppliedVignette = nil

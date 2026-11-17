@@ -35,7 +35,7 @@ les captures via le dossier indiqué par `UWUI_INK_DUMP_DIR`.
 - `dist/Ultrawide-UI-Overhaul-v2.5.10.zip` : copie du ZIP publié, identique
   à celle du dossier de publication.
 - `diagnostics/` : tests de régression du chargement, du Main Menu, des
-  tooltips Cyberware, de Glam Doc et de Crafting.
+  tooltips Cyberware, de Glam Doc, de Crafting et de la détection de Revised Backpack.
 - `tools/` : désassemblage PE et recherche de références aux chaînes pour
   retrouver les hooks après une mise à jour du jeu.
 - `maintenance/recovery/` : ancien essai Backpack non commité sauvegardé
