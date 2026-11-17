@@ -45,11 +45,10 @@ les captures via le dossier indiqué par `UWUI_INK_DUMP_DIR`.
 - `maintenance/cleanup-verification.json` : inventaire des références Git
   et vérifications effectuées lors de la consolidation du 17 novembre 2026.
 
-Les trois anciens worktrees ont été supprimés. Les gros anciens ZIP de test,
-copies de builds, captures abandonnées et sauvegardes de World Map ont été
-regroupés à côté du dépôt dans `_A-SUPPRIMER-UltrawideUIOverhaul-20261117`.
-Le contrôle automatique a refusé leur suppression définitive et Windows a
-refusé leur passage à la Corbeille : ce dossier peut être supprimé manuellement.
+Les anciens worktrees, gros ZIP de test, copies de builds, captures abandonnées
+et sauvegardes de World Map ont été supprimés. Le dossier temporaire de retrait
+a été supprimé dans l'Explorateur après retrait de l'attribut lecture seule
+de 356 fichiers Git ; il ne reste aucun ancien dossier à supprimer.
 Les archives de publication extérieures au dépôt et l'installation du jeu
 sont conservées.
 
