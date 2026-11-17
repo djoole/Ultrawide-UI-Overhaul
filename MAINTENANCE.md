@@ -2,7 +2,7 @@
 
 Ce dépôt remplace les anciens dossiers World Map, controller-fix,
 backpack-preinit et dual-uhd-test. Les branches et tags historiques sont
-conservés. La branche courante contient les sources de la 2.5.10.
+conservés. La branche courante contient les sources de la 2.5.11.
 Inventory HUD et Scanner HUD restent des projets séparés.
 
 ## Sources et compilation
@@ -18,8 +18,7 @@ Inventory HUD et Scanner HUD restent des projets séparés.
 Depuis la racine du dépôt :
 
 ```powershell
-& .\native\build.ps1 -OutputPath 'native\build-2.5.10'
-& .\native\tests\run.ps1
+& .\native\build.ps1 -OutputPath 'C:\Modding\Temp\Codex\UltrawideUIOverhaul\20261117-release-2.5.11\native'
 python diagnostics/run_all.py
 ```
 
@@ -28,12 +27,18 @@ d'analyse PE dans `tools/` utilisent Capstone. Les captures de test utiles
 sont conservées dans `maintenance/ink-test-fixtures.zip`, sans extraction.
 Cette archive est locale et ignorée par Git ; sur un autre poste, fournir
 les captures via le dossier indiqué par `UWUI_INK_DUMP_DIR`.
+Adapter la date et le sujet du dossier temporaire pour chaque compilation.
+Le lanceur natif historique `native/tests/run.ps1` écrit encore dans le dépôt :
+rediriger sa variable `$build` vers ce dossier temporaire avant de le réutiliser.
 
 ## Éléments conservés localement
 
-- `native/build-2.5.10/` : dernier binaire officiel et objets de compilation.
+- `native/build-2.5.10/` : binaire et objets conservés lors de la consolidation.
 - `dist/Ultrawide-UI-Overhaul-v2.5.10.zip` : copie du ZIP publié, identique
   à celle du dossier de publication.
+- La publication 2.5.11 se trouve dans le dossier de publication Nexus extérieur
+  au dépôt ; sa DLL peut être extraite du ZIP ou recompilée depuis les sources.
+  Les nouveaux intermédiaires de compilation restent dans le dossier temporaire.
 - `diagnostics/` : tests de régression du chargement, du Main Menu, des
   tooltips Cyberware, de Glam Doc, de Crafting et de la détection de Revised Backpack.
 - `tools/` : désassemblage PE et recherche de références aux chaînes pour

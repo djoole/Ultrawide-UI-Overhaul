@@ -1,6 +1,6 @@
 # Ultrawide UI Overhaul
 
-Current release: **2.5.10**
+Current release: **2.5.11**
 
 Ultrawide UI Overhaul redesigns Cyberpunk 2077's menus, loading screens and
 fullscreen backgrounds for displays from 2:1 through 32:9. Content-heavy menus
@@ -52,6 +52,14 @@ background is intentionally laid out across the display. It registers
 The hook is version-locked to Cyberpunk 2077 2.5 (runtime 3.0.88.46235). It checks the expected bytes
 at the target RVA and refuses to install on an unknown executable. A game update
 may require a new RVA/signature before the plugin can be used safely.
+
+## Version 2.5.11
+
+- Fixed Revised Backpack failing to expand to ultrawide on affected setups,
+  including Revised Backpack 0.9.17. Root widgets are now identified by name
+  regardless of their child order.
+- Added precise readiness diagnostics when debug logging is enabled. Logging
+  remains disabled by default and respects the saved setting.
 
 ## Version 2.5.10
 

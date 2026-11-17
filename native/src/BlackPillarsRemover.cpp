@@ -303,7 +303,7 @@ bool InstallHook()
     }
 
     s_fitReferenceRectTarget = target;
-    LogInfo("[BlackPillarsRemover] 2.5.10: register-preserving fullscreen hook installed");
+    LogInfo("[BlackPillarsRemover] 2.5.11: register-preserving fullscreen hook installed");
     LogInfo("[BlackPillarsRemover] ultrawide fullscreen composition enabled");
     return true;
 }
@@ -360,7 +360,7 @@ RED4EXT_C_EXPORT void RED4EXT_CALL Query(RED4ext::v1::PluginInfo* aInfo)
 {
     aInfo->name = L"Black Pillars Remover";
     aInfo->author = L"djoole";
-    aInfo->version = RED4EXT_V1_SEMVER(2, 5, 10);
+    aInfo->version = RED4EXT_V1_SEMVER(2, 5, 11);
     aInfo->runtime = RED4EXT_V1_RUNTIME_VERSION_2_50;
     aInfo->sdk = RED4EXT_V1_SDK_VERSION_CURRENT;
 }
