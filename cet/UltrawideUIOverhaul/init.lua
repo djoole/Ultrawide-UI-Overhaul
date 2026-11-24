@@ -1,4 +1,4 @@
--- Ultrawide UI Overhaul v2.5.11-b4
+-- Ultrawide UI Overhaul v2.5.11-b5
 --
 -- Active layout mutations:
 --   MAIN MENU:
@@ -111,7 +111,7 @@
 local ACTIVATE_DEBUG_LOGS = false
 
 local LOG_FILE = "UltrawideUIOverhaul_debug.log"
-local LOG_PREFIX = "[UWUI v2.5.11-b4]"
+local LOG_PREFIX = "[UWUI v2.5.11-b5]"
 
 local REFERENCE_HEIGHT = 2160.0
 local WORLD_MAP_VIEWPORT_HEIGHT = 1080.0
@@ -246,6 +246,7 @@ local pendingBackpackSearchController = nil
 -- dataView. Poll only while Crafting is initializing; rebuild once, then stop.
 local pendingCraftingGridRebuildController = nil
 local pendingCraftingGridRebuildChecks = 0
+UWUI_crafting = { cellWidth = 224.0, edgePadding = 6.0 }
 
 -- Character's master backgrounds arrive later than both controller
 -- OnInitialize and the next frame. Poll only the exact direct paths until all
@@ -2037,6 +2038,28 @@ local function setWidgetSizeExact(widget, width, height)
     end)
 end
 
+function UWUI_crafting.getColumnGeometry(geometry)
+    local extraWidth = math.max(0.0, geometry.contentWidth - VANILLA_CONTENT_WIDTH)
+    local unsnappedGridWidth = 1350.0 + extraWidth + 220.0 * geometry.uiSpread
+    local visibleBudget = unsnappedGridWidth - 200.0 * geometry.uiSpread
+    -- Choose whole 224-unit cells from the visible holder, not the larger
+    -- virtual/cache width. The native grid packs recipes in these cell units
+    -- (one-cell recipes are 224 wide, three-cell weapons are 672).
+    local columns = math.max(6, math.floor(visibleBudget / UWUI_crafting.cellWidth + 1e-9))
+    -- Preserve the authored 1350 = 6*224 + 6 viewport at UI Spread 0%.
+    -- This padding also keeps the holder's -5/+5 gradient mask margins from
+    -- shaving the last cell. It remains well inside the details-panel gap.
+    local width = columns * UWUI_crafting.cellWidth + UWUI_crafting.edgePadding
+    return {
+        columns = columns,
+        width = width,
+        extraWidth = extraWidth,
+        visibleBudget = visibleBudget,
+        unsnappedGridWidth = unsnappedGridWidth,
+        detailsLeft = 1435.0 + extraWidth,
+    }
+end
+
 local function applyCraftingLayoutDirect(controller, reason)
     disablePillars("crafting " .. tostring(reason))
 
@@ -2059,19 +2082,10 @@ local function applyCraftingLayoutDirect(controller, reason)
         return false
     end
 
-    local extraWidth = math.max(
-        0.0,
-        geometry.contentWidth - VANILLA_CONTENT_WIDTH
-    )
-    -- The validated full-spread layout adds one extra 220-wide cell beyond
-    -- the raw ultrawide extension. Fade that bonus cell with UI Spread so
-    -- 0% returns to the authored 1350-wide vanilla recipe viewport while
-    -- 100% remains exactly identical to v2.3.0.
-    local gridWidth = 1350.0 + extraWidth + 220.0 * geometry.uiSpread
-    -- The full-spread holder inset must fade with UI Spread too. A fixed
-    -- 200-unit subtraction clips the last vanilla column at 0% (1150 vs 1350).
-    local listHolderWidth = gridWidth - 200.0 * geometry.uiSpread
-    local detailsLeft = 1435.0 + extraWidth
+    local columns = UWUI_crafting.getColumnGeometry(geometry)
+    local gridWidth = columns.width
+    local listHolderWidth = columns.width
+    local detailsLeft = columns.detailsLeft
 
     local rootOk = setWidgetSizeExact(
         tree.contentRoot,
@@ -2127,10 +2141,15 @@ local function applyCraftingLayoutDirect(controller, reason)
         writeDebugLog(string.format(
             "geometry contentWidth=%.2f extra=%.2f gridWidth=%.2f listHolderWidth=%.2f detailsLeft=%.2f",
             geometry.contentWidth,
-            extraWidth,
+            columns.extraWidth,
             gridWidth,
             listHolderWidth,
             detailsLeft
+        ))
+        writeDebugLog(string.format(
+            "CRAFTING whole columns=%d cellWidth=%.2f edgePadding=%.2f visibleBudget=%.2f previousGridWidth=%.2f snappedWidth=%.2f",
+            columns.columns, UWUI_crafting.cellWidth, UWUI_crafting.edgePadding,
+            columns.visibleBudget, columns.unsnappedGridWidth, columns.width
         ))
         writeDebugLog(string.format(
             "direct paths: root=%s tabs=%s craftingPanel=%s panelCanvas=%s leftContainer=%s listHolder=%s gridFrame=%s cache=%s scrollArea=%s virtualList=%s details=%s hints=%s",
@@ -9469,7 +9488,7 @@ registerForEvent("onInit", function()
 
     if ACTIVATE_DEBUG_LOGS then
         writeDebugLog(
-            "loaded: Ultrawide UI Overhaul v2.5.11-b4 + UI SPREAD + LOADING SCREEN + DEFAULT LOADING MASK + INITIAL LOADING COVER + MAIN MENU + STARTUP PILLAR LOCK + HUB + strict hints + BACKPACK + optional REVISED BACKPACK + CRAFTING + WORLD MAP + CHARACTER + NOTIFICATION POPUPS + ITEM PREVIEW + WARDROBE PREVIEW + GALLERY + SHARDS + optional READABLE SHARDS + PAUSE MENU + SAVE/LOAD + STORAGE/STASH + BUY/SELL VENDOR + GLAM DOC + CYBERWARE CURSOR TOOLTIPS + BREACH PROTOCOL + BREACH TUTORIAL + SETTINGS DUAL ROOT + NATIVE SETTINGS + VEHICLE SELECTOR FRONTEND + optional MOD SETTINGS + SYSTEM NOTIFICATIONS + FLATLINED + ARCADE NATIVE PILLARS + optional STEALTHRUNNER exact paths"
+            "loaded: Ultrawide UI Overhaul v2.5.11-b5 + UI SPREAD + LOADING SCREEN + DEFAULT LOADING MASK + INITIAL LOADING COVER + MAIN MENU + STARTUP PILLAR LOCK + HUB + strict hints + BACKPACK + optional REVISED BACKPACK + CRAFTING + WORLD MAP + CHARACTER + NOTIFICATION POPUPS + ITEM PREVIEW + WARDROBE PREVIEW + GALLERY + SHARDS + optional READABLE SHARDS + PAUSE MENU + SAVE/LOAD + STORAGE/STASH + BUY/SELL VENDOR + GLAM DOC + CYBERWARE CURSOR TOOLTIPS + BREACH PROTOCOL + BREACH TUTORIAL + SETTINGS DUAL ROOT + NATIVE SETTINGS + VEHICLE SELECTOR FRONTEND + optional MOD SETTINGS + SYSTEM NOTIFICATIONS + FLATLINED + ARCADE NATIVE PILLARS + optional STEALTHRUNNER exact paths"
         )
     end
 end)

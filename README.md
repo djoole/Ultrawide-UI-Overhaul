@@ -61,7 +61,7 @@ may require a new RVA/signature before the plugin can be used safely.
 - Added precise readiness diagnostics when debug logging is enabled. Logging
   remains disabled by default and respects the saved setting.
 
-### Test build 2.5.11-b4
+### Test build 2.5.11-b5
 
 - Added optional compatibility with Readable Shards' fullscreen Codex renderer.
   Its paragraph and conversation layout receives a private settings copy with
@@ -77,6 +77,10 @@ may require a new RVA/signature before the plugin can be used safely.
 - Validate the renderer's exact widget paths instead of Lua-wrapper identity,
   and omit the automatically injected GameInstance when calling the original
   renderer through CET. Log completion or failure of the original rendering.
+- Fit Crafting to whole 224-unit recipe columns using the visible viewport
+  budget. Its holder, cache, scroll area and virtual list share the same width,
+  preventing a partially hidden final column at intermediate UI Spread values
+  and different aspect ratios. Recipe details retain their existing placement.
 
 ## Version 2.5.10
 
