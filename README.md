@@ -1,6 +1,6 @@
 # Ultrawide UI Overhaul
 
-Current release: **2.5.11**
+Current release: **2.5.12**
 
 Ultrawide UI Overhaul redesigns Cyberpunk 2077's menus, loading screens and
 fullscreen backgrounds for displays from 2:1 through 32:9. Content-heavy menus
@@ -53,7 +53,7 @@ The hook is version-locked to Cyberpunk 2077 2.5 (runtime 3.0.88.46235). It chec
 at the target RVA and refuses to install on an unknown executable. A game update
 may require a new RVA/signature before the plugin can be used safely.
 
-## Version 2.5.11
+## Version 2.5.12
 
 - Added compatibility with Readable Shards: fullscreen shard text uses the
   available ultrawide width while preserving its formatting and reading settings.
@@ -62,9 +62,11 @@ may require a new RVA/signature before the plugin can be used safely.
 - Fixed weapon tiles sometimes displaying a single-cell frame in Vendor menus.
 - Fixed Vendor grids initially filling only six columns when the other inventory
   is empty, including empty Drop Points.
-- Fixed Revised Backpack failing to expand to ultrawide when root widgets appear
-  in a different child order, including Revised Backpack 0.9.17.
 - Debug logging remains optional, disabled by default, and respects saved settings.
+
+## Version 2.5.11
+
+- Fixed Revised Backpack failing to expand to ultrawide on affected setups.
 
 ## Version 2.5.10
 

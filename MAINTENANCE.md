@@ -2,7 +2,7 @@
 
 Ce dépôt remplace les anciens dossiers World Map, controller-fix,
 backpack-preinit et dual-uhd-test. Les branches et tags historiques sont
-conservés. La branche courante contient les sources de la 2.5.11.
+conservés. La branche courante contient les sources de la 2.5.12.
 Inventory HUD et Scanner HUD restent des projets séparés.
 
 ## Sources et compilation
@@ -18,7 +18,7 @@ Inventory HUD et Scanner HUD restent des projets séparés.
 Depuis la racine du dépôt :
 
 ```powershell
-& .\native\build.ps1 -OutputPath 'C:\Modding\Temp\Codex\UltrawideUIOverhaul\20261117-release-2.5.11\native'
+& .\native\build.ps1 -OutputPath 'C:\Modding\Temp\Codex\UltrawideUIOverhaul\20261124-release-2.5.12\native'
 python -B diagnostics/run_all.py
 ```
 
@@ -36,7 +36,7 @@ rediriger sa variable `$build` vers ce dossier temporaire avant de le réutilise
 - `native/build-2.5.10/` : binaire et objets conservés lors de la consolidation.
 - `dist/Ultrawide-UI-Overhaul-v2.5.10.zip` : copie du ZIP publié, identique
   à celle du dossier de publication.
-- La publication 2.5.11 se trouve dans le dossier de publication Nexus extérieur
+- La publication 2.5.12 se trouve dans le dossier de publication Nexus extérieur
   au dépôt ; sa DLL peut être extraite du ZIP ou recompilée depuis les sources.
   Les nouveaux intermédiaires de compilation restent dans le dossier temporaire.
 - `diagnostics/` : tests de régression du chargement, du Main Menu, des
