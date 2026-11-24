@@ -1,4 +1,4 @@
--- Ultrawide UI Overhaul v2.5.11-b8
+-- Ultrawide UI Overhaul v2.5.11-b9
 --
 -- Active layout mutations:
 --   MAIN MENU:
@@ -111,7 +111,7 @@
 local ACTIVATE_DEBUG_LOGS = false
 
 local LOG_FILE = "UltrawideUIOverhaul_debug.log"
-local LOG_PREFIX = "[UWUI v2.5.11-b8]"
+local LOG_PREFIX = "[UWUI v2.5.11-b9]"
 
 local REFERENCE_HEIGHT = 2160.0
 local WORLD_MAP_VIEWPORT_HEIGHT = 1080.0
@@ -3965,14 +3965,15 @@ local function scheduleVendorDataViewRefresh(controller, source)
         return
     end
 
-    if not (vendorPlayerItemMaterialized and
+    if not (vendorPlayerItemMaterialized or
             vendorVendorItemMaterialized) then
         return
     end
 
-    -- Exact analogue of the retained Stash refresh: once both sides are
-    -- known to be live, wait a single 0.20 s window so native virtual-list
-    -- materialization/layout can finish, then replay the current filters once.
+    -- An empty inventory never materializes a tile (e.g. an empty Drop Point).
+    -- Either side is sufficient: native population builds both data views and
+    -- filter groups, including All Items on an empty side. Wait the existing
+    -- 0.20 s layout window, then replay the selected filters once for both grids.
     pendingVendorDataRefreshController = controller
     pendingVendorDataRefreshDelay = VENDOR_DATA_REFRESH_DELAY
 
@@ -8816,11 +8817,11 @@ registerForEvent("onInit", function()
                     end
                 end
 
-                if vendorPlayerItemMaterialized and
+                if vendorPlayerItemMaterialized or
                    vendorVendorItemMaterialized then
                     scheduleVendorDataViewRefresh(
                         vendorController,
-                        "both Vendor virtual grids ready"
+                        "first non-empty Vendor virtual grid ready"
                     )
                 end
             end
@@ -9638,7 +9639,7 @@ registerForEvent("onInit", function()
 
     if ACTIVATE_DEBUG_LOGS then
         writeDebugLog(
-            "loaded: Ultrawide UI Overhaul v2.5.11-b8 + UI SPREAD + LOADING SCREEN + DEFAULT LOADING MASK + INITIAL LOADING COVER + MAIN MENU + STARTUP PILLAR LOCK + HUB + strict hints + BACKPACK + optional REVISED BACKPACK + CRAFTING + WORLD MAP + CHARACTER + NOTIFICATION POPUPS + ITEM PREVIEW + WARDROBE PREVIEW + GALLERY + SHARDS + optional READABLE SHARDS + PAUSE MENU + SAVE/LOAD + STORAGE/STASH + BUY/SELL VENDOR + GLAM DOC + CYBERWARE CURSOR TOOLTIPS + BREACH PROTOCOL + BREACH TUTORIAL + SETTINGS DUAL ROOT + NATIVE SETTINGS + VEHICLE SELECTOR FRONTEND + optional MOD SETTINGS + SYSTEM NOTIFICATIONS + FLATLINED + ARCADE NATIVE PILLARS + optional STEALTHRUNNER exact paths"
+            "loaded: Ultrawide UI Overhaul v2.5.11-b9 + UI SPREAD + LOADING SCREEN + DEFAULT LOADING MASK + INITIAL LOADING COVER + MAIN MENU + STARTUP PILLAR LOCK + HUB + strict hints + BACKPACK + optional REVISED BACKPACK + CRAFTING + WORLD MAP + CHARACTER + NOTIFICATION POPUPS + ITEM PREVIEW + WARDROBE PREVIEW + GALLERY + SHARDS + optional READABLE SHARDS + PAUSE MENU + SAVE/LOAD + STORAGE/STASH + BUY/SELL VENDOR + GLAM DOC + CYBERWARE CURSOR TOOLTIPS + BREACH PROTOCOL + BREACH TUTORIAL + SETTINGS DUAL ROOT + NATIVE SETTINGS + VEHICLE SELECTOR FRONTEND + optional MOD SETTINGS + SYSTEM NOTIFICATIONS + FLATLINED + ARCADE NATIVE PILLARS + optional STEALTHRUNNER exact paths"
         )
     end
 end)
@@ -9692,12 +9693,12 @@ registerForEvent("onUpdate", function(deltaTime)
             pendingVendorDataRefreshDelay = 0.0
 
             applyVendorExact(
-                "both Vendor virtual grids ready -> 0.20s deferred finalize"
+                "first non-empty Vendor virtual grid ready -> 0.20s deferred finalize"
             )
 
             refreshVendorDataViewsExact(
                 controller,
-                "both Vendor virtual grids ready -> 0.20s native filter refresh"
+                "first non-empty Vendor virtual grid ready -> 0.20s native filter refresh"
             )
         end
     end

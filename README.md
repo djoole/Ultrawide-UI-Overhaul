@@ -61,7 +61,7 @@ may require a new RVA/signature before the plugin can be used safely.
 - Added precise readiness diagnostics when debug logging is enabled. Logging
   remains disabled by default and respects the saved setting.
 
-### Test build 2.5.11-b8
+### Test build 2.5.11-b9
 
 - Added optional compatibility with Readable Shards' fullscreen Codex renderer.
   Its paragraph and conversation layout receives a private settings copy with
@@ -88,6 +88,9 @@ may require a new RVA/signature before the plugin can be used safely.
 - Use the live CET RTTI property names for Vendor item controllers; the
   decompiled script's `m_` aliases are not exposed by CET. Debug logs report
   skipped inspections and successful native template replacement requests.
+- Refresh the initial Vendor grids when either inventory materializes its first
+  item. An empty Drop Point no longer blocks the populated side at six columns.
+  The deferred refresh preserves the selected filters and runs once per visit.
 
 ## Version 2.5.10
 
