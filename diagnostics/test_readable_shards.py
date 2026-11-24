@@ -5,6 +5,7 @@ from lupa.lua54 import LuaRuntime
 
 SOURCE = Path('cet/UltrawideUIOverhaul/init.lua').read_text(encoding='utf-8')
 BASELINE = subprocess.check_output(['git', 'show', 'v2.5.11:cet/UltrawideUIOverhaul/init.lua']).decode('utf-8')
+BUILD1 = subprocess.check_output(['git', 'show', '86fef3d:cet/UltrawideUIOverhaul/init.lua']).decode('utf-8')
 
 
 def setup(source=SOURCE, width=3440, height=1440, spread=100):
@@ -142,6 +143,8 @@ for descriptor,expected in [
     ('{name: Unknown}',False),
     ('ApplyCodex(menuRoot: whandle:inkWidget, settings: handle:MisterChedda.ReadableShards.ReadableShardsSettings, game: GameInstance)',False),
     ('ApplyCodex(menuRoot: whandle:inkWidget, settings: handle:MisterChedda.ReadableShards.ReadableShardsSettings, game: GameInstance, isEncrypted: Bool)',True),
+    ('ApplyCodex;inkWidgetReadableShardsSettingsGameInstanceBool(menuRoot: whandle:inkWidget, settings: handle:MisterChedda.ReadableShards.ReadableShardsSettings, game: GameInstance, isEncrypted: Bool)',True),
+    ('{\n\tname: MisterChedda.ReadableShards.ReadableShardRenderer,\n\tstaticFunctions: {\n\t\tApplyCodex;inkWidgetReadableShardsSettingsGameInstanceBool(menuRoot: whandle:inkWidget, settings: handle:MisterChedda.ReadableShards.ReadableShardsSettings, game: GameInstance, isEncrypted: Bool),\n\t},\n}',True),
 ]:
     lua,_=setup()
     lua.globals().descriptor=descriptor
@@ -151,3 +154,29 @@ for descriptor,expected in [
     assert len(list(lua.globals().overrides.items()))==int(expected)
     assert lua.globals().UWUI_readableShards.registered==expected
 print('PASS optional hook registration and four-argument RTTI contract guard')
+
+descriptor = '{\n\tname: MisterChedda.ReadableShards.ReadableShardRenderer,\n\tstaticFunctions: {\n\t\tApplyCodex;inkWidgetReadableShardsSettingsGameInstanceBool(menuRoot: whandle:inkWidget, settings: handle:MisterChedda.ReadableShards.ReadableShardsSettings, game: GameInstance, isEncrypted: Bool),\n\t},\n}'
+old,_=setup(BUILD1)
+old.globals().descriptor=descriptor
+old.execute('function DumpType() return descriptor end')
+old.globals().UWUI_readableShards.register()
+assert not old.globals().UWUI_readableShards.registered
+lua,apply=setup()
+lua.globals().descriptor=descriptor
+lua.execute('''
+    debugLines={}
+    function captureDebug(line) debugLines[#debugLines+1]=line end
+    function DumpType() return descriptor end
+''')
+lua.globals().find(apply,'ACTIVATE_DEBUG_LOGS',True,True)
+lua.globals().find(apply,'writeDebugLog',lua.globals().captureDebug,True)
+lua.globals().UWUI_readableShards.register()
+method='MisterChedda.ReadableShards.ReadableShardRenderer.ApplyCodex;inkWidgetReadableShardsSettingsGameInstanceBool'
+hook=lua.globals().overrides[method]
+assert hook is not None
+hook(lua.globals().entry,lua.globals().settings,'game',False,lua.globals().callOriginal)
+debug='\n'.join(lua.globals().debugLines.values())
+assert 'READABLE SHARDS adapter registered: ApplyCodex;inkWidgetReadableShardsSettingsGameInstanceBool' in debug
+assert 'READABLE SHARDS render available=2900.00 configured=1600 effective=2900' in debug
+assert lua.globals().called==1 and lua.globals().capturedSettings.wrapWidth==2900
+print('PASS reproduced build1 static-name rejection; build2 registers exact signature, invokes adapter and logs registration/render widths')
