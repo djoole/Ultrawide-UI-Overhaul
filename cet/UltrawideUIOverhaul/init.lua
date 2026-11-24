@@ -1,4 +1,4 @@
--- Ultrawide UI Overhaul v2.5.11-b5
+-- Ultrawide UI Overhaul v2.5.11-b6
 --
 -- Active layout mutations:
 --   MAIN MENU:
@@ -111,7 +111,7 @@
 local ACTIVATE_DEBUG_LOGS = false
 
 local LOG_FILE = "UltrawideUIOverhaul_debug.log"
-local LOG_PREFIX = "[UWUI v2.5.11-b5]"
+local LOG_PREFIX = "[UWUI v2.5.11-b6]"
 
 local REFERENCE_HEIGHT = 2160.0
 local WORLD_MAP_VIEWPORT_HEIGHT = 1080.0
@@ -324,6 +324,7 @@ local vendorDataRefreshInProgress = false
 local pendingVendorDataRefreshController = nil
 local pendingVendorDataRefreshDelay = 0.0
 local VENDOR_DATA_REFRESH_DELAY = 0.20
+UWUI_vendorItems = { pending = {}, lastError = nil }
 
 local pendingGalleryLayoutWatch = false
 local pendingGalleryLayoutReason = nil
@@ -3981,6 +3982,111 @@ local function scheduleVendorDataViewRefresh(controller, source)
             tostring(source),
             VENDOR_DATA_REFRESH_DELAY
         ))
+    end
+end
+
+function UWUI_vendorItems.inspect(controller)
+    if not vendorMenuActive or stashMenuActive or controller == nil or
+       getTargetGeometry() == nil then return nil end
+    -- EquipmentEx and Virtual Atelier derive their own virtual controllers.
+    -- Restrict this correction to the ordinary buy/sell controller and the
+    -- two authored stock templates observed in the failing dump.
+    if safe(function() return controller:GetClassName().value end) ~= "VendorItemVirtualController" then
+        return nil
+    end
+    if safe(function() return controller.m_isSpawnInProgress end) == true then return nil end
+    local view = safe(function() return controller.m_itemViewController end)
+    local root = safe(function() return controller:GetRootWidget() end)
+    local widget = view and safe(function() return view:GetRootWidget() end) or nil
+    if widgetName(root) ~= "root" or widgetName(widget) ~= "container" then return nil end
+    local actual = nil
+    if directChild(widget, 2, "weaponWrapper") ~= nil then
+        actual = "weaponDisplay"
+    elseif directChild(widget, 2, "itemWrapper") ~= nil then
+        actual = "itemDisplay"
+    else
+        return nil
+    end
+
+    local data = safe(function() return controller.m_newData end) or
+        safe(function() return controller.m_data end)
+    local item = data and safe(function() return data.Item end) or nil
+    local isWeapon = nil
+    if item ~= nil then isWeapon = safe(function() return item:IsWeapon() end) end
+    if type(isWeapon) ~= "boolean" then
+        -- Legacy InventoryItemData uses the same test as the stock controller.
+        isWeapon = safe(function()
+            return InventoryItemData.GetEquipmentArea(controller.m_data.ItemData) ==
+                gamedataEquipmentArea.Weapon
+        end)
+    end
+    if type(isWeapon) ~= "boolean" then return nil end
+    return {
+        root = root, widget = widget, view = view,
+        actual = actual, wanted = isWeapon and "weaponDisplay" or "itemDisplay",
+    }
+end
+
+function UWUI_vendorItems.enqueue(controller, reason)
+    local ok, state = pcall(UWUI_vendorItems.inspect, controller)
+    if not ok or state == nil or state.actual == state.wanted then return end
+    -- CET supplies the callback's self as a weak handle. Keep only that handle;
+    -- re-read current data next update, after native binding/spawn has returned.
+    UWUI_vendorItems.pending[#UWUI_vendorItems.pending + 1] = {
+        controller = controller, reason = reason,
+    }
+end
+
+function UWUI_vendorItems.process()
+    if #UWUI_vendorItems.pending == 0 then return end
+    if not vendorMenuActive or stashMenuActive then
+        UWUI_vendorItems.pending = {}
+        return
+    end
+    local pending = UWUI_vendorItems.pending
+    UWUI_vendorItems.pending = {}
+    for index, entry in ipairs(pending) do
+        if index > 32 then
+            UWUI_vendorItems.pending[#UWUI_vendorItems.pending + 1] = entry
+        else
+            local ok, err = pcall(function()
+                local controller = entry.controller
+                local state = UWUI_vendorItems.inspect(controller)
+                if state == nil or state.actual == state.wanted then return end
+                local value = controller:GetData()
+                if value == nil then return end
+                local beforeRoot, beforeView = nil, nil
+                if ACTIVATE_DEBUG_LOGS then
+                    beforeRoot = debugWidgetSize(state.root)
+                    beforeView = debugWidgetSize(state.widget)
+                end
+                -- Stock OnDataChanged only chooses a template when its view
+                -- is nil; it otherwise reuses an incompatible itemDisplay or
+                -- weaponDisplay. Retire only the stale child, then let the
+                -- original game code async-spawn and bind the proper template.
+                controller.m_itemViewController = nil
+                local removed, removeError = pcall(function() state.root:RemoveChild(state.widget) end)
+                if not removed then
+                    controller.m_itemViewController = state.view
+                    error(removeError)
+                end
+                controller:OnDataChanged(value)
+                if ACTIVATE_DEBUG_LOGS then
+                    writeDebugLog(string.format(
+                        "VENDOR TILE native respawn requested: old=%s wanted=%s root=%s child=%s reason=%s",
+                        state.actual, state.wanted, tostring(beforeRoot), tostring(beforeView), entry.reason
+                    ))
+                end
+            end)
+            if not ok and tostring(err) ~= UWUI_vendorItems.lastError then
+                UWUI_vendorItems.lastError = tostring(err)
+                if ACTIVATE_DEBUG_LOGS then
+                    writeDebugLog("VENDOR TILE repair error: " .. tostring(err))
+                else
+                    print(LOG_PREFIX .. " VENDOR TILE repair error: " .. tostring(err))
+                end
+            end
+        end
     end
 end
 
@@ -8571,6 +8677,8 @@ registerForEvent("onInit", function()
 
             vendorMenuActive = true
             vendorController = controller
+            UWUI_vendorItems.pending = {}
+            UWUI_vendorItems.lastError = nil
             vendorPlayerItemMaterialized = false
             vendorVendorItemMaterialized = false
             vendorDefaultPlayerFilterForced = false
@@ -8593,6 +8701,7 @@ registerForEvent("onInit", function()
             if stashMenuActive then return end
             vendorMenuActive = false
             vendorController = nil
+            UWUI_vendorItems.pending = {}
             vendorPlayerItemMaterialized = false
             vendorVendorItemMaterialized = false
             vendorDefaultPlayerFilterForced = false
@@ -8637,6 +8746,7 @@ registerForEvent("onInit", function()
             "VendorItemVirtualController",
             "OnDataChanged;Variant",
             function(itemController)
+                UWUI_vendorItems.enqueue(itemController, "OnDataChanged")
                 if stashMenuActive or not vendorMenuActive or
                    vendorDataRefreshInProgress then
                     return
@@ -8696,6 +8806,23 @@ registerForEvent("onInit", function()
                 end
             end
         )
+    end)
+
+    pcall(function()
+        ObserveAfter("VendorItemVirtualController", "OnSpawned", function(itemController)
+            -- Data may have changed while an older async template was loading.
+            -- This second event covers that race without cancelling requests.
+            UWUI_vendorItems.enqueue(itemController, "OnSpawned")
+            if ACTIVATE_DEBUG_LOGS then
+                local state = UWUI_vendorItems.inspect(itemController)
+                if state ~= nil then
+                    writeDebugLog(string.format(
+                        "VENDOR TILE spawned: wanted=%s actual=%s root=%s child=%s",
+                        state.wanted, state.actual, debugWidgetSize(state.root), debugWidgetSize(state.widget)
+                    ))
+                end
+            end
+        end)
     end)
 
     pcall(function()
@@ -9488,12 +9615,13 @@ registerForEvent("onInit", function()
 
     if ACTIVATE_DEBUG_LOGS then
         writeDebugLog(
-            "loaded: Ultrawide UI Overhaul v2.5.11-b5 + UI SPREAD + LOADING SCREEN + DEFAULT LOADING MASK + INITIAL LOADING COVER + MAIN MENU + STARTUP PILLAR LOCK + HUB + strict hints + BACKPACK + optional REVISED BACKPACK + CRAFTING + WORLD MAP + CHARACTER + NOTIFICATION POPUPS + ITEM PREVIEW + WARDROBE PREVIEW + GALLERY + SHARDS + optional READABLE SHARDS + PAUSE MENU + SAVE/LOAD + STORAGE/STASH + BUY/SELL VENDOR + GLAM DOC + CYBERWARE CURSOR TOOLTIPS + BREACH PROTOCOL + BREACH TUTORIAL + SETTINGS DUAL ROOT + NATIVE SETTINGS + VEHICLE SELECTOR FRONTEND + optional MOD SETTINGS + SYSTEM NOTIFICATIONS + FLATLINED + ARCADE NATIVE PILLARS + optional STEALTHRUNNER exact paths"
+            "loaded: Ultrawide UI Overhaul v2.5.11-b6 + UI SPREAD + LOADING SCREEN + DEFAULT LOADING MASK + INITIAL LOADING COVER + MAIN MENU + STARTUP PILLAR LOCK + HUB + strict hints + BACKPACK + optional REVISED BACKPACK + CRAFTING + WORLD MAP + CHARACTER + NOTIFICATION POPUPS + ITEM PREVIEW + WARDROBE PREVIEW + GALLERY + SHARDS + optional READABLE SHARDS + PAUSE MENU + SAVE/LOAD + STORAGE/STASH + BUY/SELL VENDOR + GLAM DOC + CYBERWARE CURSOR TOOLTIPS + BREACH PROTOCOL + BREACH TUTORIAL + SETTINGS DUAL ROOT + NATIVE SETTINGS + VEHICLE SELECTOR FRONTEND + optional MOD SETTINGS + SYSTEM NOTIFICATIONS + FLATLINED + ARCADE NATIVE PILLARS + optional STEALTHRUNNER exact paths"
         )
     end
 end)
 
 registerForEvent("onUpdate", function(deltaTime)
+    UWUI_vendorItems.process()
     applySystemNotificationExact()
 
     if UWUI_glamdoc.pending then
@@ -9877,6 +10005,7 @@ registerForEvent("onUpdate", function(deltaTime)
 end)
 
 registerForEvent("onShutdown", function()
+    UWUI_vendorItems.pending = {}
     UWUI_glamdoc.pending = false
     UWUI_cyberwareTooltips.followsCursor = false
     mainMenuWatchActive = false

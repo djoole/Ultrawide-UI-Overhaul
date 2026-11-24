@@ -61,7 +61,7 @@ may require a new RVA/signature before the plugin can be used safely.
 - Added precise readiness diagnostics when debug logging is enabled. Logging
   remains disabled by default and respects the saved setting.
 
-### Test build 2.5.11-b5
+### Test build 2.5.11-b6
 
 - Added optional compatibility with Readable Shards' fullscreen Codex renderer.
   Its paragraph and conversation layout receives a private settings copy with
@@ -81,6 +81,10 @@ may require a new RVA/signature before the plugin can be used safely.
   budget. Its holder, cache, scroll area and virtual list share the same width,
   preventing a partially hidden final column at intermediate UI Spread values
   and different aspect ratios. Recipe details retain their existing placement.
+- Correct stale item/weapon display templates in ordinary Vendor grids when
+  recycled items or asynchronous spawns receive a different item type. The
+  native game code respawns the appropriate template after the binding callback
+  returns; item dimensions, Stash and derived store controllers are unchanged.
 
 ## Version 2.5.10
 
