@@ -3,6 +3,9 @@ from pathlib import Path
 from lupa.lua54 import LuaRuntime
 
 SOURCE = Path('cet/UltrawideUIOverhaul/init.lua').read_text(encoding='utf-8')
+# Captured live CET DumpType(VendorItemVirtualController, false) reports these
+# four property names. The decompiler's m_ spellings are not runtime properties.
+RTTI_PROPERTIES = {'data', 'newData', 'itemViewController', 'isSpawnInProgress'}
 
 
 def setup():
@@ -50,7 +53,7 @@ def setup():
                 GetClassName=function() return {value='InventoryWeaponDisplayController'} end}
         end
         function controller()
-            local c={root=widget('root',224,202),m_isSpawnInProgress=false,
+            local c={root=widget('root',224,202),isSpawnInProgress=false,
                 class='VendorItemVirtualController',requests=0}
             function c:GetClassName() return {value=self.class} end
             function c:GetRootWidget() return self.root end
@@ -59,19 +62,19 @@ def setup():
             -- choose the template only if no view is present. While loading, a
             -- data change updates the item but does not change the pending asset.
             function c:OnDataChanged(value)
-                self.current=value;self.m_newData=value
+                self.current=value;self.newData=value
                 self.root.size.X=value.Item:IsWeapon() and 672 or 224
-                if not self.m_isSpawnInProgress and self.m_itemViewController==nil then
+                if not self.isSpawnInProgress and self.itemViewController==nil then
                     self.requested=value.Item:IsWeapon() and 'weaponDisplay' or 'itemDisplay'
-                    self.m_isSpawnInProgress=true;self.requests=self.requests+1
+                    self.isSpawnInProgress=true;self.requests=self.requests+1
                 end
                 UWUI_vendorItems.enqueue(self,'OnDataChanged')
             end
             function c:complete()
-                assert(self.m_isSpawnInProgress)
-                self.m_itemViewController=view(self.requested)
-                self.root.children[0]=self.m_itemViewController:GetRootWidget()
-                self.m_isSpawnInProgress=false;spawns=spawns+1
+                assert(self.isSpawnInProgress)
+                self.itemViewController=view(self.requested)
+                self.root.children[0]=self.itemViewController:GetRootWidget()
+                self.isSpawnInProgress=false;spawns=spawns+1
                 UWUI_vendorItems.enqueue(self,'OnSpawned')
             end
             function c:bind(weapon) self:OnDataChanged({Item=item(weapon)}) end
@@ -89,6 +92,8 @@ def setup():
 # and a 650-wide display child. Reproduce the pending-spawn race exactly.
 lua=setup()
 c=lua.globals().controller()
+for name in RTTI_PROPERTIES:
+    assert c['m_' + name] is None
 c.bind(c,False)
 c.bind(c,True)
 c.complete(c)
@@ -96,7 +101,7 @@ assert c.root.size.X==672 and c.root.children[0].size.X==216
 assert len(lua.globals().UWUI_vendorItems.pending)==1
 assert lua.globals().removals==0  # Enqueue never mutates during a native callback.
 lua.globals().UWUI_vendorItems.process()
-assert c.requested=='weaponDisplay' and c.m_isSpawnInProgress
+assert c.requested=='weaponDisplay' and c.isSpawnInProgress
 assert c.root.size.X==672 and lua.globals().removals==1
 c.complete(c)
 assert c.root.children[0].size.X==650
@@ -162,10 +167,10 @@ print('PASS event queue processes at most 32 corrections per update and stops af
 
 lua=setup();c=lua.globals().controller()
 c.bind(c,False);c.complete(c);c.bind(c,True)
-old=c.m_itemViewController
+old=c.itemViewController
 lua.execute('function cannotRemove() error("removal rejected") end')
 c.root.RemoveChild=lua.globals().cannotRemove
 lua.globals().UWUI_vendorItems.process()
-assert c.m_itemViewController is not None and c.root.children[0].size.X==216
+assert c.itemViewController is not None and c.root.children[0].size.X==216
 assert c.requests==1 and len(lua.globals().messages)==1
 print('PASS failed child removal restores the existing view and reports the error without issuing another spawn')

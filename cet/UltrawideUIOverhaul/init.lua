@@ -1,4 +1,4 @@
--- Ultrawide UI Overhaul v2.5.11-b6
+-- Ultrawide UI Overhaul v2.5.11-b8
 --
 -- Active layout mutations:
 --   MAIN MENU:
@@ -111,7 +111,7 @@
 local ACTIVATE_DEBUG_LOGS = false
 
 local LOG_FILE = "UltrawideUIOverhaul_debug.log"
-local LOG_PREFIX = "[UWUI v2.5.11-b6]"
+local LOG_PREFIX = "[UWUI v2.5.11-b8]"
 
 local REFERENCE_HEIGHT = 2160.0
 local WORLD_MAP_VIEWPORT_HEIGHT = 1080.0
@@ -324,7 +324,7 @@ local vendorDataRefreshInProgress = false
 local pendingVendorDataRefreshController = nil
 local pendingVendorDataRefreshDelay = 0.0
 local VENDOR_DATA_REFRESH_DELAY = 0.20
-UWUI_vendorItems = { pending = {}, lastError = nil }
+UWUI_vendorItems = { pending = {}, lastError = nil, diagnosticCounts = {} }
 
 local pendingGalleryLayoutWatch = false
 local pendingGalleryLayoutReason = nil
@@ -3987,40 +3987,45 @@ end
 
 function UWUI_vendorItems.inspect(controller)
     if not vendorMenuActive or stashMenuActive or controller == nil or
-       getTargetGeometry() == nil then return nil end
+       getTargetGeometry() == nil then return nil, "inactive/unsupported" end
     -- EquipmentEx and Virtual Atelier derive their own virtual controllers.
     -- Restrict this correction to the ordinary buy/sell controller and the
     -- two authored stock templates observed in the failing dump.
-    if safe(function() return controller:GetClassName().value end) ~= "VendorItemVirtualController" then
-        return nil
+    local class = safe(function() return controller:GetClassName().value end)
+    if class ~= "VendorItemVirtualController" then
+        return nil, "class=" .. tostring(class)
     end
-    if safe(function() return controller.m_isSpawnInProgress end) == true then return nil end
-    local view = safe(function() return controller.m_itemViewController end)
+    -- Use live RTTI property names. The decompiled script emits m_ aliases,
+    -- but CET exposes itemViewController/isSpawnInProgress/newData/data.
+    if safe(function() return controller.isSpawnInProgress end) == true then return nil, "spawn in progress" end
+    local view = safe(function() return controller.itemViewController end)
     local root = safe(function() return controller:GetRootWidget() end)
     local widget = view and safe(function() return view:GetRootWidget() end) or nil
-    if widgetName(root) ~= "root" or widgetName(widget) ~= "container" then return nil end
+    if widgetName(root) ~= "root" or widgetName(widget) ~= "container" then
+        return nil, "roots=" .. widgetName(root) .. "/" .. widgetName(widget)
+    end
     local actual = nil
     if directChild(widget, 2, "weaponWrapper") ~= nil then
         actual = "weaponDisplay"
     elseif directChild(widget, 2, "itemWrapper") ~= nil then
         actual = "itemDisplay"
     else
-        return nil
+        return nil, "unknown template; child2=" .. widgetName(directChild(widget, 2))
     end
 
-    local data = safe(function() return controller.m_newData end) or
-        safe(function() return controller.m_data end)
+    local data = safe(function() return controller.newData end) or
+        safe(function() return controller.data end)
     local item = data and safe(function() return data.Item end) or nil
     local isWeapon = nil
     if item ~= nil then isWeapon = safe(function() return item:IsWeapon() end) end
     if type(isWeapon) ~= "boolean" then
         -- Legacy InventoryItemData uses the same test as the stock controller.
         isWeapon = safe(function()
-            return InventoryItemData.GetEquipmentArea(controller.m_data.ItemData) ==
+            return InventoryItemData.GetEquipmentArea(controller.data.ItemData) ==
                 gamedataEquipmentArea.Weapon
         end)
     end
-    if type(isWeapon) ~= "boolean" then return nil end
+    if type(isWeapon) ~= "boolean" then return nil, "weapon test unavailable; item=" .. tostring(item) end
     return {
         root = root, widget = widget, view = view,
         actual = actual, wanted = isWeapon and "weaponDisplay" or "itemDisplay",
@@ -4028,7 +4033,17 @@ function UWUI_vendorItems.inspect(controller)
 end
 
 function UWUI_vendorItems.enqueue(controller, reason)
-    local ok, state = pcall(UWUI_vendorItems.inspect, controller)
+    local ok, state, detail = pcall(UWUI_vendorItems.inspect, controller)
+    if ACTIVATE_DEBUG_LOGS and vendorMenuActive and not stashMenuActive then
+        local status = not ok and ("inspect error=" .. tostring(state)) or
+            (state and ("actual=" .. state.actual .. " wanted=" .. state.wanted) or tostring(detail))
+        local key = reason .. " " .. status
+        local count = UWUI_vendorItems.diagnosticCounts[key] or 0
+        if count < 3 then
+            UWUI_vendorItems.diagnosticCounts[key] = count + 1
+            writeDebugLog("VENDOR TILE inspect " .. reason .. ": " .. status)
+        end
+    end
     if not ok or state == nil or state.actual == state.wanted then return end
     -- CET supplies the callback's self as a weak handle. Keep only that handle;
     -- re-read current data next update, after native binding/spawn has returned.
@@ -4064,10 +4079,13 @@ function UWUI_vendorItems.process()
                 -- is nil; it otherwise reuses an incompatible itemDisplay or
                 -- weaponDisplay. Retire only the stale child, then let the
                 -- original game code async-spawn and bind the proper template.
-                controller.m_itemViewController = nil
+                controller.itemViewController = nil
+                if controller.itemViewController ~= nil then
+                    error("CET did not clear itemViewController; existing tile retained")
+                end
                 local removed, removeError = pcall(function() state.root:RemoveChild(state.widget) end)
                 if not removed then
-                    controller.m_itemViewController = state.view
+                    controller.itemViewController = state.view
                     error(removeError)
                 end
                 controller:OnDataChanged(value)
@@ -8679,6 +8697,7 @@ registerForEvent("onInit", function()
             vendorController = controller
             UWUI_vendorItems.pending = {}
             UWUI_vendorItems.lastError = nil
+            UWUI_vendorItems.diagnosticCounts = {}
             vendorPlayerItemMaterialized = false
             vendorVendorItemMaterialized = false
             vendorDefaultPlayerFilterForced = false
@@ -8808,7 +8827,7 @@ registerForEvent("onInit", function()
         )
     end)
 
-    pcall(function()
+    UWUI_vendorItems.spawnHookOk, UWUI_vendorItems.spawnHookError = pcall(function()
         ObserveAfter("VendorItemVirtualController", "OnSpawned", function(itemController)
             -- Data may have changed while an older async template was loading.
             -- This second event covers that race without cancelling requests.
@@ -8824,6 +8843,10 @@ registerForEvent("onInit", function()
             end
         end)
     end)
+    if ACTIVATE_DEBUG_LOGS then
+        writeDebugLog("VENDOR TILE OnSpawned hook: " .. tostring(UWUI_vendorItems.spawnHookOk) ..
+            " error=" .. tostring(UWUI_vendorItems.spawnHookError))
+    end
 
     pcall(function()
         Observe(
@@ -9615,7 +9638,7 @@ registerForEvent("onInit", function()
 
     if ACTIVATE_DEBUG_LOGS then
         writeDebugLog(
-            "loaded: Ultrawide UI Overhaul v2.5.11-b6 + UI SPREAD + LOADING SCREEN + DEFAULT LOADING MASK + INITIAL LOADING COVER + MAIN MENU + STARTUP PILLAR LOCK + HUB + strict hints + BACKPACK + optional REVISED BACKPACK + CRAFTING + WORLD MAP + CHARACTER + NOTIFICATION POPUPS + ITEM PREVIEW + WARDROBE PREVIEW + GALLERY + SHARDS + optional READABLE SHARDS + PAUSE MENU + SAVE/LOAD + STORAGE/STASH + BUY/SELL VENDOR + GLAM DOC + CYBERWARE CURSOR TOOLTIPS + BREACH PROTOCOL + BREACH TUTORIAL + SETTINGS DUAL ROOT + NATIVE SETTINGS + VEHICLE SELECTOR FRONTEND + optional MOD SETTINGS + SYSTEM NOTIFICATIONS + FLATLINED + ARCADE NATIVE PILLARS + optional STEALTHRUNNER exact paths"
+            "loaded: Ultrawide UI Overhaul v2.5.11-b8 + UI SPREAD + LOADING SCREEN + DEFAULT LOADING MASK + INITIAL LOADING COVER + MAIN MENU + STARTUP PILLAR LOCK + HUB + strict hints + BACKPACK + optional REVISED BACKPACK + CRAFTING + WORLD MAP + CHARACTER + NOTIFICATION POPUPS + ITEM PREVIEW + WARDROBE PREVIEW + GALLERY + SHARDS + optional READABLE SHARDS + PAUSE MENU + SAVE/LOAD + STORAGE/STASH + BUY/SELL VENDOR + GLAM DOC + CYBERWARE CURSOR TOOLTIPS + BREACH PROTOCOL + BREACH TUTORIAL + SETTINGS DUAL ROOT + NATIVE SETTINGS + VEHICLE SELECTOR FRONTEND + optional MOD SETTINGS + SYSTEM NOTIFICATIONS + FLATLINED + ARCADE NATIVE PILLARS + optional STEALTHRUNNER exact paths"
         )
     end
 end)

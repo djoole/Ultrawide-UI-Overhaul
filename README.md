@@ -61,7 +61,7 @@ may require a new RVA/signature before the plugin can be used safely.
 - Added precise readiness diagnostics when debug logging is enabled. Logging
   remains disabled by default and respects the saved setting.
 
-### Test build 2.5.11-b6
+### Test build 2.5.11-b8
 
 - Added optional compatibility with Readable Shards' fullscreen Codex renderer.
   Its paragraph and conversation layout receives a private settings copy with
@@ -85,6 +85,9 @@ may require a new RVA/signature before the plugin can be used safely.
   recycled items or asynchronous spawns receive a different item type. The
   native game code respawns the appropriate template after the binding callback
   returns; item dimensions, Stash and derived store controllers are unchanged.
+- Use the live CET RTTI property names for Vendor item controllers; the
+  decompiled script's `m_` aliases are not exposed by CET. Debug logs report
+  skipped inspections and successful native template replacement requests.
 
 ## Version 2.5.10
 
