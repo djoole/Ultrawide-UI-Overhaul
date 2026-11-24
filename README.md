@@ -61,7 +61,7 @@ may require a new RVA/signature before the plugin can be used safely.
 - Added precise readiness diagnostics when debug logging is enabled. Logging
   remains disabled by default and respects the saved setting.
 
-### Test build 2.5.11-b2
+### Test build 2.5.11-b3
 
 - Added optional compatibility with Readable Shards' fullscreen Codex renderer.
   Its paragraph and conversation layout receives a private settings copy with
@@ -70,9 +70,10 @@ may require a new RVA/signature before the plugin can be used safely.
   scaled proportionally to the available UI Spread width.
 - Readable Shards remains optional. Unsupported renderer signatures fall back
   to the original rendering path with a diagnostic message.
-- Fixed the build1 static-method probe to recognize the mangled ApplyCodex
-  signature and hook that exact method. Adapter registration and rendering
-  diagnostics are written to the dedicated debug log when enabled.
+- Resolve the exact ApplyCodex static callable through CET's extension lookup.
+  The scripted static function is absent from DumpType's class descriptor;
+  builds 1 and 2 therefore incorrectly skipped the adapter. Registration and
+  rendering diagnostics use the dedicated debug log when enabled.
 
 ## Version 2.5.10
 

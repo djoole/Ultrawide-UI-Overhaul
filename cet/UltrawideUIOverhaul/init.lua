@@ -1,4 +1,4 @@
--- Ultrawide UI Overhaul v2.5.11-b2
+-- Ultrawide UI Overhaul v2.5.11-b3
 --
 -- Active layout mutations:
 --   MAIN MENU:
@@ -111,7 +111,7 @@
 local ACTIVATE_DEBUG_LOGS = false
 
 local LOG_FILE = "UltrawideUIOverhaul_debug.log"
-local LOG_PREFIX = "[UWUI v2.5.11-b2]"
+local LOG_PREFIX = "[UWUI v2.5.11-b3]"
 
 local REFERENCE_HEIGHT = 2160.0
 local WORLD_MAP_VIEWPORT_HEIGHT = 1080.0
@@ -6336,36 +6336,23 @@ end
 
 function UWUI_readableShards.register()
     if UWUI_readableShards.registered then return end
-    local ok, descriptor = pcall(function()
-        return tostring(DumpType(UWUI_readableShards.rendererClass, false))
+    local available, detail = optionalClassAvailable(UWUI_readableShards.rendererClass, nil)
+    if not available then
+        UWUI_readableShards.report("adapter skipped: renderer class absent (" .. tostring(detail) .. ")")
+        return
+    end
+    -- CET ParseGlobalStatics indexes scripted Class::Function globals in an
+    -- extension map. ClassType::Dump omits this map, so neither build1 nor
+    -- build2 could see ApplyCodex despite the class being present. Resolve the
+    -- exact callable through CET's static lookup, without executing it.
+    local ok, callable = pcall(function()
+        local renderer = GetSingleton(UWUI_readableShards.rendererClass)
+        if renderer == nil then return nil end
+        return renderer[UWUI_readableShards.applyCodexMethod]
     end)
-    -- Scripted static methods may retain their full mangled signature as
-    -- shortName in CET's descriptor. Build1 only accepted ApplyCodex(...)
-    -- and silently missed ApplyCodex;inkWidget...Bool(...).
-    local method = ok and descriptor:match("(ApplyCodex[^%(\n]*%([^\n]+)") or nil
-    if method == nil then
-        UWUI_readableShards.report("adapter skipped: ApplyCodex not present in renderer descriptor")
-        if ACTIVATE_DEBUG_LOGS then
-            writeDebugLog("READABLE SHARDS renderer descriptor: " .. tostring(descriptor))
-        end
-        return
-    end
-    -- Match the installed four-argument contract. Older/different renderers
-    -- must not receive a callback with an incompatible argument count.
-    -- The descriptor also appends a comma after each function entry; count
-    -- separators only inside the parameter parentheses.
-    local parameters = method:match("%(([^%)]*)%)") or ""
-    if not parameters:find("menuRoot:", 1, true) or
-       not parameters:find("settings:", 1, true) or
-       not parameters:find("game:", 1, true) or
-       not parameters:find("isEncrypted: Bool", 1, true) or
-       select(2, parameters:gsub(",", "")) ~= 3 then
-        UWUI_readableShards.report("adapter skipped: unsupported ApplyCodex signature " .. method, true)
-        return
-    end
-    local methodName = method:match("^([^%(]+)%(")
-    if methodName ~= "ApplyCodex" and methodName ~= UWUI_readableShards.applyCodexMethod then
-        UWUI_readableShards.report("adapter skipped: unsupported static method " .. tostring(methodName), true)
+    if not ok or type(callable) ~= "function" then
+        UWUI_readableShards.report("adapter skipped: exact static lookup failed for " ..
+            UWUI_readableShards.applyCodexMethod .. " (" .. tostring(callable) .. ")", true)
         return
     end
     local registered, err = pcall(function()
@@ -9443,7 +9430,7 @@ registerForEvent("onInit", function()
 
     if ACTIVATE_DEBUG_LOGS then
         writeDebugLog(
-            "loaded: Ultrawide UI Overhaul v2.5.11-b2 + UI SPREAD + LOADING SCREEN + DEFAULT LOADING MASK + INITIAL LOADING COVER + MAIN MENU + STARTUP PILLAR LOCK + HUB + strict hints + BACKPACK + optional REVISED BACKPACK + CRAFTING + WORLD MAP + CHARACTER + NOTIFICATION POPUPS + ITEM PREVIEW + WARDROBE PREVIEW + GALLERY + SHARDS + optional READABLE SHARDS + PAUSE MENU + SAVE/LOAD + STORAGE/STASH + BUY/SELL VENDOR + GLAM DOC + CYBERWARE CURSOR TOOLTIPS + BREACH PROTOCOL + BREACH TUTORIAL + SETTINGS DUAL ROOT + NATIVE SETTINGS + VEHICLE SELECTOR FRONTEND + optional MOD SETTINGS + SYSTEM NOTIFICATIONS + FLATLINED + ARCADE NATIVE PILLARS + optional STEALTHRUNNER exact paths"
+            "loaded: Ultrawide UI Overhaul v2.5.11-b3 + UI SPREAD + LOADING SCREEN + DEFAULT LOADING MASK + INITIAL LOADING COVER + MAIN MENU + STARTUP PILLAR LOCK + HUB + strict hints + BACKPACK + optional REVISED BACKPACK + CRAFTING + WORLD MAP + CHARACTER + NOTIFICATION POPUPS + ITEM PREVIEW + WARDROBE PREVIEW + GALLERY + SHARDS + optional READABLE SHARDS + PAUSE MENU + SAVE/LOAD + STORAGE/STASH + BUY/SELL VENDOR + GLAM DOC + CYBERWARE CURSOR TOOLTIPS + BREACH PROTOCOL + BREACH TUTORIAL + SETTINGS DUAL ROOT + NATIVE SETTINGS + VEHICLE SELECTOR FRONTEND + optional MOD SETTINGS + SYSTEM NOTIFICATIONS + FLATLINED + ARCADE NATIVE PILLARS + optional STEALTHRUNNER exact paths"
         )
     end
 end)

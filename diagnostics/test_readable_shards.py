@@ -6,6 +6,25 @@ from lupa.lua54 import LuaRuntime
 SOURCE = Path('cet/UltrawideUIOverhaul/init.lua').read_text(encoding='utf-8')
 BASELINE = subprocess.check_output(['git', 'show', 'v2.5.11:cet/UltrawideUIOverhaul/init.lua']).decode('utf-8')
 BUILD1 = subprocess.check_output(['git', 'show', '86fef3d:cet/UltrawideUIOverhaul/init.lua']).decode('utf-8')
+BUILD2 = subprocess.check_output(['git', 'show', '3f88ec0:cet/UltrawideUIOverhaul/init.lua']).decode('utf-8')
+
+# Actual relevant descriptor fields from the failed build2 session. The class
+# exists, but its global scripted static functions are absent from DumpType.
+LIVE_DESCRIPTOR = '{\n\tname: MisterChedda.ReadableShards.ReadableShardRenderer,\n\tfunctions: {\n\t\tToString() => (String),\n\t},\n\tstaticFunctions: {\n\t\tDetectScriptableCycles(),\n\t},\n\tproperties: {\n\t}\n}'
+
+
+def static_lookup(lua, present=True):
+    lua.globals().staticPresent=present
+    lua.execute('''
+        function GetSingleton(class)
+            assert(class=='MisterChedda.ReadableShards.ReadableShardRenderer')
+            staticLookups=(staticLookups or 0)+1
+            if not staticPresent then return {} end
+            return {['ApplyCodex;inkWidgetReadableShardsSettingsGameInstanceBool']=function()
+                error('presence probe must not execute the renderer')
+            end}
+        end
+    ''')
 
 
 def setup(source=SOURCE, width=3440, height=1440, spread=100):
@@ -139,30 +158,31 @@ assert lua.globals().called==2 and len(lua.globals().messages)==1 and len(lua.gl
 lua.execute('assert(capturedSettings==settings)')
 print('PASS allocation failure forwards original once and logs a throttled error')
 
-for descriptor,expected in [
-    ('{name: Unknown}',False),
-    ('ApplyCodex(menuRoot: whandle:inkWidget, settings: handle:MisterChedda.ReadableShards.ReadableShardsSettings, game: GameInstance)',False),
-    ('ApplyCodex(menuRoot: whandle:inkWidget, settings: handle:MisterChedda.ReadableShards.ReadableShardsSettings, game: GameInstance, isEncrypted: Bool)',True),
-    ('ApplyCodex;inkWidgetReadableShardsSettingsGameInstanceBool(menuRoot: whandle:inkWidget, settings: handle:MisterChedda.ReadableShards.ReadableShardsSettings, game: GameInstance, isEncrypted: Bool)',True),
-    ('{\n\tname: MisterChedda.ReadableShards.ReadableShardRenderer,\n\tstaticFunctions: {\n\t\tApplyCodex;inkWidgetReadableShardsSettingsGameInstanceBool(menuRoot: whandle:inkWidget, settings: handle:MisterChedda.ReadableShards.ReadableShardsSettings, game: GameInstance, isEncrypted: Bool),\n\t},\n}',True),
+for descriptor,present,expected in [
+    ('{name: Unknown}',True,False),
+    (LIVE_DESCRIPTOR,False,False),
+    (LIVE_DESCRIPTOR,True,True),
 ]:
     lua,_=setup()
     lua.globals().descriptor=descriptor
+    static_lookup(lua,present)
     lua.execute('function DumpType(class,detail) return descriptor end')
     lua.globals().UWUI_readableShards.register()
     lua.globals().UWUI_readableShards.register()
     assert len(list(lua.globals().overrides.items()))==int(expected)
     assert lua.globals().UWUI_readableShards.registered==expected
-print('PASS optional hook registration and four-argument RTTI contract guard')
+print('PASS optional class and exact static-callable guards, including a class descriptor without ApplyCodex')
 
-descriptor = '{\n\tname: MisterChedda.ReadableShards.ReadableShardRenderer,\n\tstaticFunctions: {\n\t\tApplyCodex;inkWidgetReadableShardsSettingsGameInstanceBool(menuRoot: whandle:inkWidget, settings: handle:MisterChedda.ReadableShards.ReadableShardsSettings, game: GameInstance, isEncrypted: Bool),\n\t},\n}'
-old,_=setup(BUILD1)
-old.globals().descriptor=descriptor
-old.execute('function DumpType() return descriptor end')
-old.globals().UWUI_readableShards.register()
-assert not old.globals().UWUI_readableShards.registered
+for prior in [BUILD1,BUILD2]:
+    old,_=setup(prior)
+    old.globals().descriptor=LIVE_DESCRIPTOR
+    static_lookup(old)
+    old.execute('function DumpType() return descriptor end')
+    old.globals().UWUI_readableShards.register()
+    assert not old.globals().UWUI_readableShards.registered
 lua,apply=setup()
-lua.globals().descriptor=descriptor
+lua.globals().descriptor=LIVE_DESCRIPTOR
+static_lookup(lua)
 lua.execute('''
     debugLines={}
     function captureDebug(line) debugLines[#debugLines+1]=line end
@@ -179,4 +199,4 @@ debug='\n'.join(lua.globals().debugLines.values())
 assert 'READABLE SHARDS adapter registered: ApplyCodex;inkWidgetReadableShardsSettingsGameInstanceBool' in debug
 assert 'READABLE SHARDS render available=2900.00 configured=1600 effective=2900' in debug
 assert lua.globals().called==1 and lua.globals().capturedSettings.wrapWidth==2900
-print('PASS reproduced build1 static-name rejection; build2 registers exact signature, invokes adapter and logs registration/render widths')
+print('PASS actual build2 descriptor reproduces both prior failures; build3 resolves the extension callable, registers and logs the render width')

@@ -1,4 +1,4 @@
--- Ultrawide UI Overhaul v2.5.11-b2
+-- Ultrawide UI Overhaul v2.5.11-b3
 -- Black Pillars Coordinator
 --
 -- Policy:
