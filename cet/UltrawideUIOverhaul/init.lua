@@ -1,4 +1,4 @@
--- Ultrawide UI Overhaul v2.5.11
+-- Ultrawide UI Overhaul v2.5.11-b1
 --
 -- Active layout mutations:
 --   MAIN MENU:
@@ -111,7 +111,7 @@
 local ACTIVATE_DEBUG_LOGS = false
 
 local LOG_FILE = "UltrawideUIOverhaul_debug.log"
-local LOG_PREFIX = "[UWUI v2.5.11]"
+local LOG_PREFIX = "[UWUI v2.5.11-b1]"
 
 local REFERENCE_HEIGHT = 2160.0
 local WORLD_MAP_VIEWPORT_HEIGHT = 1080.0
@@ -342,6 +342,21 @@ local pendingRevisedBackpackController = nil
 local pendingRevisedBackpackReason = nil
 local pendingRevisedBackpackChecks = 0
 UWUI_revisedBackpack = { lastPendingReason = nil }
+
+-- Optional Readable Shards adapter. It supplies a per-render settings copy;
+-- asynchronous conversations own that copy without altering saved preferences.
+UWUI_readableShards = {
+    rendererClass = "MisterChedda.ReadableShards.ReadableShardRenderer",
+    settingsClass = "MisterChedda.ReadableShards.ReadableShardsSettings",
+    registered = false,
+    lastError = nil,
+    settingNames = {
+        "enabled", "fontSize", "lineHeight", "wrapWidth", "paragraphSpacing",
+        "backgroundOpacity", "containerWidthPercent", "containerHeightPercent",
+        "styleConversations", "tintDialogueText", "alignSpeakerNames",
+        "speakerAlignment", "conversationSpacing",
+    },
+}
 
 -- Optional StealthRunner compatibility.
 -- Current StealthRunner does not fire the historical popup callbacks when its
@@ -6231,6 +6246,105 @@ local function tryApplyShardsLayoutDirect(reason)
     return success
 end
 
+function UWUI_readableShards.prepare(menuRoot, settings, isEncrypted)
+    -- Notifications use ReadableShardRenderer.Apply, not ApplyCodex. Encrypted
+    -- entries and disabled settings retain Readable Shards' original path.
+    if settings == nil or not settings.enabled or isEncrypted then return nil end
+    local geometry = getUISpreadGeometry(getTargetGeometry())
+    if geometry == nil then return nil end
+    local tree = resolveShardsTree()
+    if tree == nil or (menuRoot ~= tree.entryView and menuRoot ~= tree.contentRoot) then
+        return nil
+    end
+
+    local availableWidth = math.max(2000.0, geometry.contentWidth - 1860.0) - 400.0
+    local configuredWidth = tonumber(settings.wrapWidth)
+    if configuredWidth == nil or configuredWidth <= 0 then
+        error("Readable Shards wrapWidth unavailable")
+    end
+    -- Preserve the user's narrower column proportion. The default 1600 uses
+    -- the entire UW reading width; UI Spread 0% keeps the authored width.
+    local width = math.floor(availableWidth * math.min(configuredWidth / 1600.0, 1.0) + 0.5)
+    if width <= configuredWidth then return nil end
+
+    local copy = NewObject(UWUI_readableShards.settingsClass)
+    if copy == nil then error("could not create Readable Shards settings copy") end
+    for _, name in ipairs(UWUI_readableShards.settingNames) do
+        local value = settings[name]
+        if value == nil then error("Readable Shards setting unavailable: " .. name) end
+        copy[name] = value
+    end
+    copy.wrapWidth = width
+
+    -- ShowEntry reuses the details controller and resets its vanilla body.
+    -- Set our reading geometry before the replacement renderer measures text.
+    if not tryApplyShardsLayoutDirect("Readable Shards pre-render") then
+        error("Shards reading geometry not ready")
+    end
+    return copy, width, availableWidth
+end
+
+function UWUI_readableShards.render(menuRoot, settings, game, isEncrypted, wrapped)
+    local ok, copy, width, availableWidth = pcall(
+        UWUI_readableShards.prepare, menuRoot, settings, isEncrypted
+    )
+    if not ok then
+        local message = tostring(copy)
+        if message ~= UWUI_readableShards.lastError then
+            UWUI_readableShards.lastError = message
+            -- A failed optional adapter must remain diagnosable even when
+            -- verbose logging is disabled; forward the original render once.
+            print(LOG_PREFIX .. " READABLE SHARDS adapter skipped: " .. message)
+        end
+        copy = nil
+    elseif copy ~= nil then
+        UWUI_readableShards.lastError = nil
+        if ACTIVATE_DEBUG_LOGS then
+            writeDebugLog(string.format(
+                "READABLE SHARDS render available=%.2f configured=%d effective=%d; private settings copy",
+                availableWidth, settings.wrapWidth, width
+            ))
+        end
+    end
+    -- The original renderer receives this copy when it builds its paragraph
+    -- widgets and when it assigns m_settings to a conversation controller.
+    -- No new observers, loops, native widget references or shared-state edits.
+    return wrapped(menuRoot, copy or settings, game, isEncrypted)
+end
+
+function UWUI_readableShards.register()
+    if UWUI_readableShards.registered then return end
+    local ok, descriptor = pcall(function()
+        return tostring(DumpType(UWUI_readableShards.rendererClass, false))
+    end)
+    local method = ok and descriptor:match("ApplyCodex%([^\n]+") or nil
+    if method == nil then
+        if ACTIVATE_DEBUG_LOGS then writeDebugLog("READABLE SHARDS adapter skipped: renderer absent") end
+        return
+    end
+    -- Match the installed four-argument contract. Older/different renderers
+    -- must not receive a callback with an incompatible argument count.
+    if not method:find("menuRoot:", 1, true) or
+       not method:find("settings:", 1, true) or
+       not method:find("game:", 1, true) or
+       not method:find("isEncrypted: Bool", 1, true) or
+       select(2, method:gsub(",", "")) ~= 3 then
+        print(LOG_PREFIX .. " READABLE SHARDS adapter skipped: unsupported ApplyCodex signature " .. method)
+        return
+    end
+    local registered, err = pcall(function()
+        -- ApplyCodex is unique in this class. CET resolves its short name via
+        -- CClass::GetFunction, including scripted static functions.
+        Override(UWUI_readableShards.rendererClass, "ApplyCodex", UWUI_readableShards.render)
+    end)
+    UWUI_readableShards.registered = registered
+    if registered then
+        print(LOG_PREFIX .. " READABLE SHARDS adapter registered: " .. method)
+    else
+        print(LOG_PREFIX .. " READABLE SHARDS registration failed: " .. tostring(err))
+    end
+end
+
 -- ---------------------------------------------------------------------------
 -- GALLERY
 --
@@ -8772,6 +8886,8 @@ registerForEvent("onInit", function()
         ))
     end
 
+    UWUI_readableShards.register()
+
     -- Shards: exact-path layout only.
     Observe("ShardsMenuGameController", "OnInitialize", function()
         pendingShardsLayoutChecks = 0
@@ -9291,7 +9407,7 @@ registerForEvent("onInit", function()
 
     if ACTIVATE_DEBUG_LOGS then
         writeDebugLog(
-            "loaded: Ultrawide UI Overhaul v2.5.11 + UI SPREAD + LOADING SCREEN + DEFAULT LOADING MASK + INITIAL LOADING COVER + MAIN MENU + STARTUP PILLAR LOCK + HUB + strict hints + BACKPACK + optional REVISED BACKPACK + CRAFTING + WORLD MAP + CHARACTER + NOTIFICATION POPUPS + ITEM PREVIEW + WARDROBE PREVIEW + GALLERY + SHARDS + PAUSE MENU + SAVE/LOAD + STORAGE/STASH + BUY/SELL VENDOR + GLAM DOC + CYBERWARE CURSOR TOOLTIPS + BREACH PROTOCOL + BREACH TUTORIAL + SETTINGS DUAL ROOT + NATIVE SETTINGS + VEHICLE SELECTOR FRONTEND + optional MOD SETTINGS + SYSTEM NOTIFICATIONS + FLATLINED + ARCADE NATIVE PILLARS + optional STEALTHRUNNER exact paths"
+            "loaded: Ultrawide UI Overhaul v2.5.11-b1 + UI SPREAD + LOADING SCREEN + DEFAULT LOADING MASK + INITIAL LOADING COVER + MAIN MENU + STARTUP PILLAR LOCK + HUB + strict hints + BACKPACK + optional REVISED BACKPACK + CRAFTING + WORLD MAP + CHARACTER + NOTIFICATION POPUPS + ITEM PREVIEW + WARDROBE PREVIEW + GALLERY + SHARDS + optional READABLE SHARDS + PAUSE MENU + SAVE/LOAD + STORAGE/STASH + BUY/SELL VENDOR + GLAM DOC + CYBERWARE CURSOR TOOLTIPS + BREACH PROTOCOL + BREACH TUTORIAL + SETTINGS DUAL ROOT + NATIVE SETTINGS + VEHICLE SELECTOR FRONTEND + optional MOD SETTINGS + SYSTEM NOTIFICATIONS + FLATLINED + ARCADE NATIVE PILLARS + optional STEALTHRUNNER exact paths"
         )
     end
 end)

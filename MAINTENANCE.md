@@ -41,6 +41,9 @@ rediriger sa variable `$build` vers ce dossier temporaire avant de le réutilise
   Les nouveaux intermédiaires de compilation restent dans le dossier temporaire.
 - `diagnostics/` : tests de régression du chargement, du Main Menu, des
   tooltips Cyberware, de Glam Doc, de Crafting et de la détection de Revised Backpack.
+- `diagnostics/test_readable_shards.py` : copie des réglages du lecteur Codex,
+  largeur des rendus paragraphes/conversations, UI Spread et isolation du
+  lecteur de notification ; l'intégration RTTI reste à valider en jeu.
 - `tools/` : désassemblage PE et recherche de références aux chaînes pour
   retrouver les hooks après une mise à jour du jeu.
 - `maintenance/recovery/` : ancien essai Backpack non commité sauvegardé

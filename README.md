@@ -61,6 +61,16 @@ may require a new RVA/signature before the plugin can be used safely.
 - Added precise readiness diagnostics when debug logging is enabled. Logging
   remains disabled by default and respects the saved setting.
 
+### Test build 2.5.11-b1
+
+- Added optional compatibility with Readable Shards' fullscreen Codex renderer.
+  Its paragraph and conversation layout receives a private settings copy with
+  the ultrawide reading width before text measurement. The saved preferences
+  and notification reader are unchanged; narrower text-width preferences are
+  scaled proportionally to the available UI Spread width.
+- Readable Shards remains optional. Unsupported renderer signatures fall back
+  to the original rendering path with a diagnostic message.
+
 ## Version 2.5.10
 
 - Fixed the controller cursor failing to move or jumping to screen corners on
