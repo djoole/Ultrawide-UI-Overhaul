@@ -1,4 +1,4 @@
--- Ultrawide UI Overhaul v2.5.11-b3
+-- Ultrawide UI Overhaul v2.5.11-b4
 --
 -- Active layout mutations:
 --   MAIN MENU:
@@ -111,7 +111,7 @@
 local ACTIVATE_DEBUG_LOGS = false
 
 local LOG_FILE = "UltrawideUIOverhaul_debug.log"
-local LOG_PREFIX = "[UWUI v2.5.11-b3]"
+local LOG_PREFIX = "[UWUI v2.5.11-b4]"
 
 local REFERENCE_HEIGHT = 2160.0
 local WORLD_MAP_VIEWPORT_HEIGHT = 1080.0
@@ -6108,6 +6108,7 @@ local function resolveShardsTree()
         entryView = entryView,
         line2 = line2,
         entryScrollArea = entryScrollArea,
+        container = container,
         text = text
     }
 end
@@ -6262,8 +6263,24 @@ function UWUI_readableShards.prepare(menuRoot, settings, isEncrypted)
     if geometry == nil then return nil, "display outside ultrawide scope" end
     local tree = resolveShardsTree()
     if tree == nil then return nil, "exact Shards tree unavailable" end
-    if menuRoot ~= tree.entryView and menuRoot ~= tree.contentRoot then
-        return nil, "renderer root does not match active Shards tree"
+    -- CET can return distinct Lua wrappers for the same inkWidget. Validate
+    -- the renderer argument's exact Shards subtree instead of comparing the
+    -- wrapper itself with a separate global-tree lookup.
+    local rendererEntry = menuRoot
+    if widgetName(rendererEntry) == "Root" then
+        rendererEntry = directChild(rendererEntry, 1, "entryView")
+    end
+    if widgetName(rendererEntry) ~= "entryView" then
+        return nil, "renderer root has no Shards entryView (" .. widgetName(menuRoot) .. ")"
+    end
+    local rendererArea = directChild(rendererEntry, 0, "contentArea")
+    local rendererScroll = directChild(rendererArea, 4, "EntryScrollArea")
+    local rendererContainer = directChild(rendererScroll, 0, "container")
+    if directChild(rendererContainer, 0, "title") == nil or
+       directChild(rendererContainer, 1, "crackHintContainer") == nil or
+       directChild(rendererContainer, 2, "text") == nil or
+       directChild(rendererContainer, 3, "shardImage") == nil then
+        return nil, "renderer argument lacks exact Shards content signature"
     end
 
     local availableWidth = math.max(2000.0, geometry.contentWidth - 1860.0) - 400.0
@@ -6320,8 +6337,9 @@ function UWUI_readableShards.render(menuRoot, settings, game, isEncrypted, wrapp
         UWUI_readableShards.lastSkipReason = nil
         if ACTIVATE_DEBUG_LOGS then
             writeDebugLog(string.format(
-                "READABLE SHARDS render available=%.2f configured=%d effective=%d; private settings copy",
-                availableWidth, settings.wrapWidth, width
+                "READABLE SHARDS render available=%.2f configured=%d effective=%d; private settings copy; font=%d lineHeight=%.3f conversations=%s alignSpeakers=%s",
+                availableWidth, settings.wrapWidth, width, copy.fontSize, copy.lineHeight,
+                tostring(copy.styleConversations), tostring(copy.alignSpeakerNames)
             ))
         end
     elseif ACTIVATE_DEBUG_LOGS and UWUI_readableShards.lastSkipReason ~= width then
@@ -6331,7 +6349,28 @@ function UWUI_readableShards.render(menuRoot, settings, game, isEncrypted, wrapp
     -- The original renderer receives this copy when it builds its paragraph
     -- widgets and when it assigns m_settings to a conversation controller.
     -- No new observers, loops, native widget references or shared-state edits.
-    return wrapped(menuRoot, copy or settings, game, isEncrypted)
+    -- Observers receive all REDscript parameters, but CET's wrapped callable
+    -- injects GameInstance itself. Passing it here makes the original renderer
+    -- reject four Lua arguments when it expects only three.
+    local rendered, result = pcall(wrapped, menuRoot, copy or settings, isEncrypted)
+    if not rendered then
+        UWUI_readableShards.report("original renderer failed: " .. tostring(result), true)
+        return nil
+    end
+    if ACTIVATE_DEBUG_LOGS then
+        writeDebugLog("READABLE SHARDS original renderer completed; settings=" ..
+            (copy ~= nil and "private UW copy" or "original"))
+        local tree = resolveShardsTree()
+        local host = tree and directChild(tree.container, 4, "ReadableShardsCodexHost") or nil
+        local panel = directChild(host, 0, nil)
+        writeDebugLog(string.format(
+            "READABLE SHARDS output: bodyVisible=%s hostVisible=%s panel=%s children=%s",
+            tostring(safe(function() return tree.text:IsVisible() end)),
+            tostring(safe(function() return host:IsVisible() end)), widgetName(panel),
+            tostring(safe(function() return panel:GetNumChildren() end))
+        ))
+    end
+    return result
 end
 
 function UWUI_readableShards.register()
@@ -9430,7 +9469,7 @@ registerForEvent("onInit", function()
 
     if ACTIVATE_DEBUG_LOGS then
         writeDebugLog(
-            "loaded: Ultrawide UI Overhaul v2.5.11-b3 + UI SPREAD + LOADING SCREEN + DEFAULT LOADING MASK + INITIAL LOADING COVER + MAIN MENU + STARTUP PILLAR LOCK + HUB + strict hints + BACKPACK + optional REVISED BACKPACK + CRAFTING + WORLD MAP + CHARACTER + NOTIFICATION POPUPS + ITEM PREVIEW + WARDROBE PREVIEW + GALLERY + SHARDS + optional READABLE SHARDS + PAUSE MENU + SAVE/LOAD + STORAGE/STASH + BUY/SELL VENDOR + GLAM DOC + CYBERWARE CURSOR TOOLTIPS + BREACH PROTOCOL + BREACH TUTORIAL + SETTINGS DUAL ROOT + NATIVE SETTINGS + VEHICLE SELECTOR FRONTEND + optional MOD SETTINGS + SYSTEM NOTIFICATIONS + FLATLINED + ARCADE NATIVE PILLARS + optional STEALTHRUNNER exact paths"
+            "loaded: Ultrawide UI Overhaul v2.5.11-b4 + UI SPREAD + LOADING SCREEN + DEFAULT LOADING MASK + INITIAL LOADING COVER + MAIN MENU + STARTUP PILLAR LOCK + HUB + strict hints + BACKPACK + optional REVISED BACKPACK + CRAFTING + WORLD MAP + CHARACTER + NOTIFICATION POPUPS + ITEM PREVIEW + WARDROBE PREVIEW + GALLERY + SHARDS + optional READABLE SHARDS + PAUSE MENU + SAVE/LOAD + STORAGE/STASH + BUY/SELL VENDOR + GLAM DOC + CYBERWARE CURSOR TOOLTIPS + BREACH PROTOCOL + BREACH TUTORIAL + SETTINGS DUAL ROOT + NATIVE SETTINGS + VEHICLE SELECTOR FRONTEND + optional MOD SETTINGS + SYSTEM NOTIFICATIONS + FLATLINED + ARCADE NATIVE PILLARS + optional STEALTHRUNNER exact paths"
         )
     end
 end)

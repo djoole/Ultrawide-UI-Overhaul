@@ -7,6 +7,7 @@ SOURCE = Path('cet/UltrawideUIOverhaul/init.lua').read_text(encoding='utf-8')
 BASELINE = subprocess.check_output(['git', 'show', 'v2.5.11:cet/UltrawideUIOverhaul/init.lua']).decode('utf-8')
 BUILD1 = subprocess.check_output(['git', 'show', '86fef3d:cet/UltrawideUIOverhaul/init.lua']).decode('utf-8')
 BUILD2 = subprocess.check_output(['git', 'show', '3f88ec0:cet/UltrawideUIOverhaul/init.lua']).decode('utf-8')
+BUILD3 = subprocess.check_output(['git', 'show', '803dfce:cet/UltrawideUIOverhaul/init.lua']).decode('utf-8')
 
 # Actual relevant descriptor fields from the failed build2 session. The class
 # exists, but its global scripted static functions are absent from DumpType.
@@ -75,10 +76,13 @@ def setup(source=SOURCE, width=3440, height=1440, spread=100):
         container=node('container','container')
         title=node('title','title',50,100)
         body=node('text','text',1600,1600)
+        crackHint=node('crack','crackHintContainer',100,100)
+        shardImage=node('image','shardImage',32,32)
         window.children[0]=outer;outer.children[0]=root
         root.children[0]=list;root.children[1]=entry
         entry.children[0]=content;content.children[1]=line;content.children[4]=scroll
-        scroll.children[0]=container;container.children[0]=title;container.children[2]=body
+        scroll.children[0]=container;container.children[0]=title;container.children[1]=crackHint
+        container.children[2]=body;container.children[3]=shardImage
         Game={GetInkSystem=function() return {GetLayer=function(_,n)
             if n~='inkMenuLayer' then error('unrelated layer') end
             return {GetVirtualWindow=function() return window end}
@@ -92,9 +96,20 @@ def setup(source=SOURCE, width=3440, height=1440, spread=100):
             paragraphSpacing=18,backgroundOpacity=.75,containerWidthPercent=100,
             containerHeightPercent=120,styleConversations=true,tintDialogueText=false,
             alignSpeakerNames=true,speakerAlignment=0,conversationSpacing=12}
-        function callOriginal(menuRoot,s,game,encrypted)
+        function callOriginal(...)
+            assert(select('#',...)==3,'CET wrapped renderer expects 3 arguments; GameInstance is injected')
+            local menuRoot,s,encrypted=...
             called=(called or 0)+1;capturedSettings=s
-            assert(menuRoot==entry and game=='game')
+            assert(menuRoot:GetName().value=='entryView' and type(encrypted)=='boolean')
+        end
+        function alias(widget)
+            return setmetatable({}, {__index=function(_,key)
+                local value=widget[key]
+                if type(value)=='function' then
+                    return function(_,...) return value(widget,...) end
+                end
+                return value
+            end})
         end
     ''')
     lua.globals().screenWidth, lua.globals().screenHeight = width, height
@@ -158,6 +173,23 @@ assert lua.globals().called==2 and len(lua.globals().messages)==1 and len(lua.gl
 lua.execute('assert(capturedSettings==settings)')
 print('PASS allocation failure forwards original once and logs a throttled error')
 
+old,_=setup(BUILD3)
+old_alias=old.globals().alias(old.globals().entry)
+copy,reason=old.globals().UWUI_readableShards.prepare(old_alias,old.globals().settings,False)
+assert copy is None and reason=='renderer root does not match active Shards tree'
+try:
+    old.globals().UWUI_readableShards.render(old.globals().entry,old.globals().settings,'game',False,old.globals().callOriginal)
+except Exception as error:
+    assert 'expects 3 arguments' in str(error)
+else:
+    raise AssertionError('build3 must fail the real CET wrapped-call argument contract')
+lua,_=setup()
+wrapped_entry=lua.globals().alias(lua.globals().entry)
+lua.globals().UWUI_readableShards.render(wrapped_entry,lua.globals().settings,'game',False,lua.globals().callOriginal)
+assert lua.globals().called==1 and lua.globals().capturedSettings.wrapWidth==2900
+assert lua.globals().settings.wrapWidth==1600
+print('PASS reproduced build3 wrapper-identity rejection and excess GameInstance argument; build4 supports aliased widget wrappers and original rendering')
+
 for descriptor,present,expected in [
     ('{name: Unknown}',True,False),
     (LIVE_DESCRIPTOR,False,False),
@@ -198,5 +230,6 @@ hook(lua.globals().entry,lua.globals().settings,'game',False,lua.globals().callO
 debug='\n'.join(lua.globals().debugLines.values())
 assert 'READABLE SHARDS adapter registered: ApplyCodex;inkWidgetReadableShardsSettingsGameInstanceBool' in debug
 assert 'READABLE SHARDS render available=2900.00 configured=1600 effective=2900' in debug
+assert 'READABLE SHARDS original renderer completed; settings=private UW copy' in debug
 assert lua.globals().called==1 and lua.globals().capturedSettings.wrapWidth==2900
-print('PASS actual build2 descriptor reproduces both prior failures; build3 resolves the extension callable, registers and logs the render width')
+print('PASS actual build2 descriptor reproduces prior failures; exact extension hook logs width and successful original-renderer completion')

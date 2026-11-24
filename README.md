@@ -61,7 +61,7 @@ may require a new RVA/signature before the plugin can be used safely.
 - Added precise readiness diagnostics when debug logging is enabled. Logging
   remains disabled by default and respects the saved setting.
 
-### Test build 2.5.11-b3
+### Test build 2.5.11-b4
 
 - Added optional compatibility with Readable Shards' fullscreen Codex renderer.
   Its paragraph and conversation layout receives a private settings copy with
@@ -74,6 +74,9 @@ may require a new RVA/signature before the plugin can be used safely.
   The scripted static function is absent from DumpType's class descriptor;
   builds 1 and 2 therefore incorrectly skipped the adapter. Registration and
   rendering diagnostics use the dedicated debug log when enabled.
+- Validate the renderer's exact widget paths instead of Lua-wrapper identity,
+  and omit the automatically injected GameInstance when calling the original
+  renderer through CET. Log completion or failure of the original rendering.
 
 ## Version 2.5.10
 
