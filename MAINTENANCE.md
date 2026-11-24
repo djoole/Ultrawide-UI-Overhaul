@@ -19,7 +19,7 @@ Depuis la racine du dépôt :
 
 ```powershell
 & .\native\build.ps1 -OutputPath 'C:\Modding\Temp\Codex\UltrawideUIOverhaul\20261117-release-2.5.11\native'
-python diagnostics/run_all.py
+python -B diagnostics/run_all.py
 ```
 
 Les tests Lua utilisent Python avec `lupa.lua54` (Lua 5.4). Les outils
@@ -43,7 +43,20 @@ rediriger sa variable `$build` vers ce dossier temporaire avant de le réutilise
   tooltips Cyberware, de Glam Doc, de Crafting et de la détection de Revised Backpack.
 - `diagnostics/test_readable_shards.py` : copie des réglages du lecteur Codex,
   largeur des rendus paragraphes/conversations, UI Spread et isolation du
-  lecteur de notification ; l'intégration RTTI reste à valider en jeu.
+  lecteur de notification. L'intégration et la mise en forme ont été validées
+  en jeu le 24 novembre 2026.
+- `diagnostics/test_vendor_item_templates.py` : remplacement des modèles de
+  tuiles item/weapon lors du recyclage et des créations asynchrones. Utiliser
+  les noms RTTI CET `itemViewController`, `isSpawnInProgress`, `newData`, `data`,
+  sans le préfixe `m_` affiché par le décompilateur.
+- `diagnostics/test_vendor_initial_grid.py` : rafraîchissement initial unique,
+  y compris avec un inventaire vide, conservation des filtres et fermeture.
+  Les cadres d'armes et la grille initiale ont été validés en jeu.
+- Les comparaisons Shards/Crafting utilisent le commit immuable
+  `7d0c98d5cce9be768e4fdc678a712faee9028583` comme référence antérieure aux
+  correctifs du 24 novembre. Ne pas les faire dépendre du tag de publication
+  courant. L'ancien état est aussi conservé sous
+  `baseline/2.5.11-revised-backpack`.
 - `tools/` : désassemblage PE et recherche de références aux chaînes pour
   retrouver les hooks après une mise à jour du jeu.
 - `maintenance/recovery/` : ancien essai Backpack non commité sauvegardé

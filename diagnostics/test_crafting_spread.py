@@ -7,7 +7,7 @@ from lupa.lua54 import LuaRuntime
 from fixture_io import read_ink_dump
 
 SOURCE = Path('cet/UltrawideUIOverhaul/init.lua').read_text(encoding='utf-8')
-BASELINE = subprocess.check_output(['git', 'show', 'v2.5.11:cet/UltrawideUIOverhaul/init.lua']).decode('utf-8')
+BASELINE = subprocess.check_output(['git', 'show', '7d0c98d5cce9be768e4fdc678a712faee9028583:cet/UltrawideUIOverhaul/init.lua']).decode('utf-8')
 DUMP = read_ink_dump('ink_tree_dump_20261116-094834_01_inkMenuLayer.json')
 HOLDER = 'inkMenuLayer/inkVirtualWindow/Root[0]/Root[0]/craftingPanel[1]/inkCanvasWidget2[0]/leftContainer[1]/list_holder[2]'
 CACHE = HOLDER + '/cache[2]'

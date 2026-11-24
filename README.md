@@ -37,7 +37,7 @@ background is intentionally laid out across the display. It registers
   modes, including 2880x1440, 1920x816, 2560x1000, 2560x1080, 3440x1440
   and 3200x900 tests;
 - optional UI compatibility for Cleaner Main Menu and Pause Menu, Preem Menu
-  StealthRunner, Revised Backpack and Vehicle Selector Frontend.
+  StealthRunner, Revised Backpack, Readable Shards and Vehicle Selector Frontend.
 
 ## Requirements
 
@@ -55,42 +55,16 @@ may require a new RVA/signature before the plugin can be used safely.
 
 ## Version 2.5.11
 
-- Fixed Revised Backpack failing to expand to ultrawide on affected setups,
-  including Revised Backpack 0.9.17. Root widgets are now identified by name
-  regardless of their child order.
-- Added precise readiness diagnostics when debug logging is enabled. Logging
-  remains disabled by default and respects the saved setting.
-
-### Test build 2.5.11-b9
-
-- Added optional compatibility with Readable Shards' fullscreen Codex renderer.
-  Its paragraph and conversation layout receives a private settings copy with
-  the ultrawide reading width before text measurement. The saved preferences
-  and notification reader are unchanged; narrower text-width preferences are
-  scaled proportionally to the available UI Spread width.
-- Readable Shards remains optional. Unsupported renderer signatures fall back
-  to the original rendering path with a diagnostic message.
-- Resolve the exact ApplyCodex static callable through CET's extension lookup.
-  The scripted static function is absent from DumpType's class descriptor;
-  builds 1 and 2 therefore incorrectly skipped the adapter. Registration and
-  rendering diagnostics use the dedicated debug log when enabled.
-- Validate the renderer's exact widget paths instead of Lua-wrapper identity,
-  and omit the automatically injected GameInstance when calling the original
-  renderer through CET. Log completion or failure of the original rendering.
-- Fit Crafting to whole 224-unit recipe columns using the visible viewport
-  budget. Its holder, cache, scroll area and virtual list share the same width,
-  preventing a partially hidden final column at intermediate UI Spread values
-  and different aspect ratios. Recipe details retain their existing placement.
-- Correct stale item/weapon display templates in ordinary Vendor grids when
-  recycled items or asynchronous spawns receive a different item type. The
-  native game code respawns the appropriate template after the binding callback
-  returns; item dimensions, Stash and derived store controllers are unchanged.
-- Use the live CET RTTI property names for Vendor item controllers; the
-  decompiled script's `m_` aliases are not exposed by CET. Debug logs report
-  skipped inspections and successful native template replacement requests.
-- Refresh the initial Vendor grids when either inventory materializes its first
-  item. An empty Drop Point no longer blocks the populated side at six columns.
-  The deferred refresh preserves the selected filters and runs once per visit.
+- Added compatibility with Readable Shards: fullscreen shard text uses the
+  available ultrawide width while preserving its formatting and reading settings.
+- Fixed partially clipped Crafting recipe columns at intermediate UI Spread
+  values and different aspect ratios.
+- Fixed weapon tiles sometimes displaying a single-cell frame in Vendor menus.
+- Fixed Vendor grids initially filling only six columns when the other inventory
+  is empty, including empty Drop Points.
+- Fixed Revised Backpack failing to expand to ultrawide when root widgets appear
+  in a different child order, including Revised Backpack 0.9.17.
+- Debug logging remains optional, disabled by default, and respects saved settings.
 
 ## Version 2.5.10
 
